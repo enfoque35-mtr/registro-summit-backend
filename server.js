@@ -27,6 +27,7 @@ const QRCode = require('qrcode');
 const { Pool } = require('pg');
 const { Resend } = require('resend');
 const crypto = require('crypto');
+const ExcelJS = require('exceljs');
 
 const app = express();
 app.use(cors());
@@ -196,30 +197,42 @@ app.get('/api/resumen', async (req, res) => {
   res.json(rows);
 });
 
-// ── Exportar todos los registros como CSV descargable ────────────
+// ── Exportar todos los registros como archivo Excel (.xlsx) ──────
 app.get('/api/exportar', async (req, res) => {
   const { rows } = await pool.query(`
-    SELECT nombre, correo, ocupacion, ciudad, telefono, comentarios,
+    SELECT token, nombre, correo, ocupacion, ciudad, telefono, comentarios,
            correo_enviado, check_in, check_in_at, created_at
     FROM registros ORDER BY created_at
   `);
 
-  const headers = ['nombre','correo','ocupacion','ciudad','telefono','comentarios','correo_enviado','check_in','check_in_at','created_at'];
-  const escape = (val) => {
-    if (val === null || val === undefined) return '';
-    const s = String(val);
-    return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
-  };
+  const workbook = new ExcelJS.Workbook();
+  const sheet = workbook.addWorksheet('Registros');
 
-  const csvLines = [
-    headers.join(','),
-    ...rows.map(row => headers.map(h => escape(row[h])).join(',')),
+  sheet.columns = [
+    { header: 'token', key: 'token', width: 38 },
+    { header: 'nombre', key: 'nombre', width: 28 },
+    { header: 'correo', key: 'correo', width: 28 },
+    { header: 'ocupacion', key: 'ocupacion', width: 22 },
+    { header: 'ciudad', key: 'ciudad', width: 18 },
+    { header: 'telefono', key: 'telefono', width: 16 },
+    { header: 'comentarios', key: 'comentarios', width: 30 },
+    { header: 'correo_enviado', key: 'correo_enviado', width: 16 },
+    { header: 'check_in', key: 'check_in', width: 12 },
+    { header: 'check_in_at', key: 'check_in_at', width: 22 },
+    { header: 'created_at', key: 'created_at', width: 22 },
   ];
-  const csv = '\uFEFF' + csvLines.join('\n'); // \uFEFF: para que Excel abra bien los acentos
+  sheet.getRow(1).font = { bold: true };
 
-  res.setHeader('Content-Type', 'text/csv; charset=utf-8');
-  res.setHeader('Content-Disposition', 'attachment; filename="registros-summit.csv"');
-  res.send(csv);
+  rows.forEach((row) => sheet.addRow(row));
+
+  res.setHeader(
+    'Content-Type',
+    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+  );
+  res.setHeader('Content-Disposition', 'attachment; filename="registros-summit.xlsx"');
+
+  await workbook.xlsx.write(res);
+  res.end();
 });
 
 const PORT = process.env.PORT || 3000;
