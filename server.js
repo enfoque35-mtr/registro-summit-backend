@@ -115,7 +115,7 @@ async function enviarCorreoConQR({ nombre, correo, token, qrPngBuffer }) {
       {
         filename: 'qr-entrada.png',
         content: qrBase64,
-        cid: 'qr-entrada',
+        contentId: 'qr-entrada', // permite referenciarlo como imagen embebida (src="cid:qr-entrada")
       },
     ],
   });
