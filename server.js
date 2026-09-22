@@ -302,9 +302,9 @@ app.get('/api/admin/estado-envio', requireAdmin, (req, res) => {
   res.json(broadcastJob);
 });
 
-// ── Enviar mensaje personalizado a todos los registrados ──────────
+// ── Enviar mensaje personalizado a los registrados seleccionados ──
 app.post('/api/admin/enviar-mensaje', requireAdmin, async (req, res) => {
-  const { asunto, mensaje } = req.body;
+  const { asunto, mensaje, ids } = req.body;
   if (!asunto || !mensaje) {
     return res.status(400).json({ ok: false, error: 'Falta el asunto o el mensaje' });
   }
@@ -312,7 +312,15 @@ app.post('/api/admin/enviar-mensaje', requireAdmin, async (req, res) => {
     return res.status(409).json({ ok: false, error: 'Ya hay un envío en curso, espera a que termine' });
   }
 
-  const { rows } = await pool.query(`SELECT nombre, correo FROM registros`);
+  // Si "ids" viene con una lista de IDs, solo se envía a esos. Si no viene o viene vacía, se envía a todos.
+  const { rows } =
+    Array.isArray(ids) && ids.length > 0
+      ? await pool.query(`SELECT nombre, correo FROM registros WHERE id = ANY($1)`, [ids])
+      : await pool.query(`SELECT nombre, correo FROM registros`);
+
+  if (rows.length === 0) {
+    return res.status(400).json({ ok: false, error: 'No hay destinatarios para enviar' });
+  }
 
   broadcastJob = {
     running: true,
