@@ -196,6 +196,32 @@ app.get('/api/resumen', async (req, res) => {
   res.json(rows);
 });
 
+// ── Exportar todos los registros como CSV descargable ────────────
+app.get('/api/exportar', async (req, res) => {
+  const { rows } = await pool.query(`
+    SELECT nombre, correo, ocupacion, ciudad, telefono, comentarios,
+           correo_enviado, check_in, check_in_at, created_at
+    FROM registros ORDER BY created_at
+  `);
+
+  const headers = ['nombre','correo','ocupacion','ciudad','telefono','comentarios','correo_enviado','check_in','check_in_at','created_at'];
+  const escape = (val) => {
+    if (val === null || val === undefined) return '';
+    const s = String(val);
+    return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+  };
+
+  const csvLines = [
+    headers.join(','),
+    ...rows.map(row => headers.map(h => escape(row[h])).join(',')),
+  ];
+  const csv = '\uFEFF' + csvLines.join('\n'); // \uFEFF: para que Excel abra bien los acentos
+
+  res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+  res.setHeader('Content-Disposition', 'attachment; filename="registros-summit.csv"');
+  res.send(csv);
+});
+
 const PORT = process.env.PORT || 3000;
 initDb()
   .then(() => app.listen(PORT, () => console.log(`Backend de registro escuchando en puerto ${PORT}`)))
