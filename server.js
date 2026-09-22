@@ -84,9 +84,10 @@ function validate(body) {
   return null;
 }
 
-// ── Email con el QR (como imagen servida desde una URL pública) ──
+// ── Email con el QR (imagen visible por URL + también adjunto) ───
 async function enviarCorreoConQR({ nombre, correo, token }) {
   const qrImageUrl = `${PUBLIC_BASE_URL}/api/qr/${token}`;
+  const qrPngBuffer = await QRCode.toBuffer(token, { width: 500, margin: 2 });
 
   await resend.emails.send({
     from: `${EVENT_NAME} <${FROM_EMAIL}>`,
@@ -112,6 +113,12 @@ async function enviarCorreoConQR({ nombre, correo, token }) {
         <p style="color:#9AA3AC; font-size:12px;">Código: ${token}</p>
       </div>
     `,
+    attachments: [
+      {
+        filename: 'qr-entrada.png',
+        content: qrPngBuffer.toString('base64'),
+      },
+    ],
   });
 }
 
