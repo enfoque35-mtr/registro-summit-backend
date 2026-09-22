@@ -98,6 +98,10 @@ async function enviarCorreoConQR({ nombre, correo, token, qrPngBuffer }) {
         </p>
         <h1 style="color:#0E2A54; font-size:22px; margin:8px 0 4px;">¡Registro confirmado, ${nombre}!</h1>
         <p style="color:#4C6270; font-size:14px; line-height:1.6;">${EVENT_DATE}</p>
+        <p style="color:#0E2A54; font-weight:700; font-size:16px; line-height:1.6; margin:16px 0;">
+          Ten en cuenta que este código solo será válido una vez se realice y valide el pago.
+          Para cualquier información o duda contacte al número 310 7089040.
+        </p>
         <p style="color:#4C6270; font-size:14px; line-height:1.6;">
           Presenta este código QR el día del evento en el punto de ingreso. Es personal e intransferible.
         </p>
