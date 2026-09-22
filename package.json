@@ -1,0 +1,20 @@
+{
+  "name": "registro-summit-backend",
+  "version": "1.0.0",
+  "description": "Backend de registro con generación y envío de QR por correo — I Summit Comunicación Política",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.19.2",
+    "qrcode": "^1.5.3",
+    "pg": "^8.13.0",
+    "resend": "^4.0.0",
+    "dotenv": "^16.4.5",
+    "cors": "^2.8.5"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
