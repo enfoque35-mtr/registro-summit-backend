@@ -37,6 +37,7 @@ const resend = new Resend(process.env.RESEND_API_KEY);
 const FROM_EMAIL = process.env.FROM_EMAIL || 'registro@enfoque35.co';
 const EVENT_NAME = 'I Summit Comunicación Política';
 const EVENT_DATE = 'Viernes 23 de octubre de 2026 · Montería';
+const PUBLIC_BASE_URL = process.env.PUBLIC_BASE_URL || 'https://registro-summit-backend-production.up.railway.app';
 
 // ── Base de datos (Postgres) ─────────────────────────────────────
 const pool = new Pool({
@@ -83,9 +84,9 @@ function validate(body) {
   return null;
 }
 
-// ── Email con el QR embebido ─────────────────────────────────────
-async function enviarCorreoConQR({ nombre, correo, token, qrPngBuffer }) {
-  const qrBase64 = qrPngBuffer.toString('base64');
+// ── Email con el QR (como imagen servida desde una URL pública) ──
+async function enviarCorreoConQR({ nombre, correo, token }) {
+  const qrImageUrl = `${PUBLIC_BASE_URL}/api/qr/${token}`;
 
   await resend.emails.send({
     from: `${EVENT_NAME} <${FROM_EMAIL}>`,
@@ -106,18 +107,11 @@ async function enviarCorreoConQR({ nombre, correo, token, qrPngBuffer }) {
           Presenta este código QR el día del evento en el punto de ingreso. Es personal e intransferible.
         </p>
         <div style="text-align:center; margin:28px 0;">
-          <img src="cid:qr-entrada" alt="Código QR de acceso" style="width:220px; height:220px;" />
+          <img src="${qrImageUrl}" alt="Código QR de acceso" width="220" height="220" style="width:220px; height:220px; display:block; margin:0 auto;" />
         </div>
         <p style="color:#9AA3AC; font-size:12px;">Código: ${token}</p>
       </div>
     `,
-    attachments: [
-      {
-        filename: 'qr-entrada.png',
-        content: qrBase64,
-        contentId: 'qr-entrada', // permite referenciarlo como imagen embebida (src="cid:qr-entrada")
-      },
-    ],
   });
 }
 
@@ -154,8 +148,7 @@ app.post('/api/registro', async (req, res) => {
   }
 
   try {
-    const qrPngBuffer = await QRCode.toBuffer(token, { width: 500, margin: 2 });
-    await enviarCorreoConQR({ nombre, correo, token, qrPngBuffer });
+    await enviarCorreoConQR({ nombre, correo, token });
     await pool.query(`UPDATE registros SET correo_enviado = TRUE WHERE token = $1`, [token]);
   } catch (e) {
     console.error('Error enviando correo:', e);
@@ -166,6 +159,18 @@ app.post('/api/registro', async (req, res) => {
   }
 
   res.status(200).json({ ok: true });
+});
+
+// ── Imagen del QR, servida públicamente por token ─────────────────
+app.get('/api/qr/:token', async (req, res) => {
+  try {
+    const buffer = await QRCode.toBuffer(req.params.token, { width: 500, margin: 2 });
+    res.setHeader('Content-Type', 'image/png');
+    res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+    res.send(buffer);
+  } catch (e) {
+    res.status(400).send('Token inválido');
+  }
 });
 
 // ── Endpoint de verificación el día del evento ───────────────────
