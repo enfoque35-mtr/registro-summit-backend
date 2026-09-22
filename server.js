@@ -38,6 +38,7 @@ const FROM_EMAIL = process.env.FROM_EMAIL || 'registro@enfoque35.co';
 const EVENT_NAME = 'I Summit Comunicación Política';
 const EVENT_DATE = 'Viernes 23 de octubre de 2026 · Montería';
 const PUBLIC_BASE_URL = process.env.PUBLIC_BASE_URL || 'https://registro-summit-backend-production.up.railway.app';
+const ADMIN_KEY = process.env.ADMIN_KEY || 'cambia-esta-clave';
 
 // ── Base de datos (Postgres) ─────────────────────────────────────
 const pool = new Pool({
@@ -249,6 +250,104 @@ app.get('/api/exportar', async (req, res) => {
 
   await workbook.xlsx.write(res);
   res.end();
+});
+
+// ── Protección simple para los endpoints de administrador ────────
+function requireAdmin(req, res, next) {
+  const key = req.headers['x-admin-key'];
+  if (!key || key !== ADMIN_KEY) {
+    return res.status(401).json({ ok: false, error: 'No autorizado' });
+  }
+  next();
+}
+
+function personalizar(texto, nombre) {
+  return (texto || '').replaceAll('{{nombre}}', nombre);
+}
+
+function construirHtmlMensaje(cuerpoPersonalizado) {
+  return `
+    <div style="font-family: Arial, sans-serif; max-width:480px; margin:0 auto; padding:24px;">
+      <p style="color:#0E2A54; font-weight:700; font-size:13px; letter-spacing:.03em; text-transform:uppercase;">
+        ${EVENT_NAME}
+      </p>
+      <div style="color:#10222F; font-size:15px; line-height:1.7; white-space:pre-line; margin-top:12px;">
+        ${cuerpoPersonalizado}
+      </div>
+    </div>
+  `;
+}
+
+// Estado del envío masivo en curso (un solo envío a la vez es suficiente aquí)
+let broadcastJob = {
+  running: false,
+  total: 0,
+  enviados: 0,
+  fallidos: 0,
+  iniciado_en: null,
+  terminado_en: null,
+};
+
+// ── Lista de registrados para el panel de administrador ───────────
+app.get('/api/admin/registros', requireAdmin, async (req, res) => {
+  const { rows } = await pool.query(`
+    SELECT id, nombre, correo, ocupacion, ciudad, check_in
+    FROM registros ORDER BY created_at
+  `);
+  res.json(rows);
+});
+
+// ── Estado del envío masivo (para la barra de progreso) ────────────
+app.get('/api/admin/estado-envio', requireAdmin, (req, res) => {
+  res.json(broadcastJob);
+});
+
+// ── Enviar mensaje personalizado a todos los registrados ──────────
+app.post('/api/admin/enviar-mensaje', requireAdmin, async (req, res) => {
+  const { asunto, mensaje } = req.body;
+  if (!asunto || !mensaje) {
+    return res.status(400).json({ ok: false, error: 'Falta el asunto o el mensaje' });
+  }
+  if (broadcastJob.running) {
+    return res.status(409).json({ ok: false, error: 'Ya hay un envío en curso, espera a que termine' });
+  }
+
+  const { rows } = await pool.query(`SELECT nombre, correo FROM registros`);
+
+  broadcastJob = {
+    running: true,
+    total: rows.length,
+    enviados: 0,
+    fallidos: 0,
+    iniciado_en: new Date().toISOString(),
+    terminado_en: null,
+  };
+
+  res.status(200).json({ ok: true, mensaje: `Envío iniciado a ${rows.length} personas` });
+
+  // El envío corre en segundo plano; el panel consulta el progreso con /api/admin/estado-envio
+  (async () => {
+    const TAMANO_LOTE = 90; // el envío por lotes de Resend acepta hasta 100 por llamada
+    for (let i = 0; i < rows.length; i += TAMANO_LOTE) {
+      const lote = rows.slice(i, i + TAMANO_LOTE);
+      const correos = lote.map((r) => ({
+        from: `${EVENT_NAME} <${FROM_EMAIL}>`,
+        to: r.correo,
+        subject: personalizar(asunto, r.nombre),
+        html: construirHtmlMensaje(personalizar(mensaje, r.nombre)),
+      }));
+
+      try {
+        await resend.batch.send(correos);
+        broadcastJob.enviados += lote.length;
+      } catch (e) {
+        console.error('Error enviando lote:', e);
+        broadcastJob.fallidos += lote.length;
+      }
+    }
+    broadcastJob.running = false;
+    broadcastJob.terminado_en = new Date().toISOString();
+  })();
 });
 
 const PORT = process.env.PORT || 3000;
