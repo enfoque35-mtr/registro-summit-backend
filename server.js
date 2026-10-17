@@ -31,7 +31,7 @@ const ExcelJS = require('exceljs');
 
 const app = express();
 app.use(cors());
-app.use(express.json());
+app.use(express.json({ limit: '10mb' })); // más grande de lo normal: aquí llegan las imágenes en base64
 
 const resend = new Resend(process.env.RESEND_API_KEY);
 const FROM_EMAIL = process.env.FROM_EMAIL || 'registro@enfoque35.co';
@@ -69,6 +69,9 @@ async function initDb() {
     CREATE UNIQUE INDEX IF NOT EXISTS correo_evento_unico
     ON registros (correo, evento)
   `);
+  // Control de pagos (se marca manualmente desde el panel)
+  await pool.query(`ALTER TABLE registros ADD COLUMN IF NOT EXISTS pagado BOOLEAN DEFAULT FALSE`);
+  await pool.query(`ALTER TABLE registros ADD COLUMN IF NOT EXISTS pagado_at TIMESTAMP`);
 }
 
 // ── Validación mínima ────────────────────────────────────────────
@@ -215,9 +218,10 @@ app.get('/api/resumen', async (req, res) => {
 });
 
 // ── Exportar todos los registros como archivo Excel (.xlsx) ──────
-app.get('/api/exportar', async (req, res) => {
+async function exportarExcel(req, res) {
   const { rows } = await pool.query(`
     SELECT token, nombre, correo, ocupacion, ciudad, telefono, comentarios,
+           CASE WHEN pagado THEN 'SI' ELSE 'NO' END AS pagado, pagado_at,
            correo_enviado, check_in, check_in_at, created_at
     FROM registros ORDER BY created_at
   `);
@@ -233,6 +237,8 @@ app.get('/api/exportar', async (req, res) => {
     { header: 'ciudad', key: 'ciudad', width: 18 },
     { header: 'telefono', key: 'telefono', width: 16 },
     { header: 'comentarios', key: 'comentarios', width: 30 },
+    { header: 'pagado', key: 'pagado', width: 10 },
+    { header: 'pagado_at', key: 'pagado_at', width: 22 },
     { header: 'correo_enviado', key: 'correo_enviado', width: 16 },
     { header: 'check_in', key: 'check_in', width: 12 },
     { header: 'check_in_at', key: 'check_in_at', width: 22 },
@@ -250,7 +256,7 @@ app.get('/api/exportar', async (req, res) => {
 
   await workbook.xlsx.write(res);
   res.end();
-});
+}
 
 // ── Protección simple para los endpoints de administrador ────────
 function requireAdmin(req, res, next) {
@@ -261,16 +267,31 @@ function requireAdmin(req, res, next) {
   next();
 }
 
+// El Excel contiene datos personales: solo con clave de administrador
+// Permite abrir el enlace directo en el navegador: /api/exportar?key=TU_CLAVE
+app.get('/api/exportar', (req, res, next) => {
+  if (req.query.key && req.query.key === ADMIN_KEY) return exportarExcel(req, res);
+  return requireAdmin(req, res, () => exportarExcel(req, res));
+});
+app.get('/api/admin/exportar', requireAdmin, exportarExcel);
+
 function personalizar(texto, nombre) {
   return (texto || '').replaceAll('{{nombre}}', nombre);
 }
 
-function construirHtmlMensaje(cuerpoPersonalizado) {
+function construirHtmlMensaje(cuerpoPersonalizado, imagenUrl) {
+  const bloqueImagen = imagenUrl
+    ? `<div style="text-align:center; margin:20px 0;">
+         <img src="${imagenUrl}" alt="" style="max-width:100%; border-radius:4px;" />
+       </div>`
+    : '';
+
   return `
     <div style="font-family: Arial, sans-serif; max-width:480px; margin:0 auto; padding:24px;">
       <p style="color:#0E2A54; font-weight:700; font-size:13px; letter-spacing:.03em; text-transform:uppercase;">
         ${EVENT_NAME}
       </p>
+      ${bloqueImagen}
       <div style="color:#10222F; font-size:15px; line-height:1.7; white-space:pre-line; margin-top:12px;">
         ${cuerpoPersonalizado}
       </div>
@@ -288,13 +309,64 @@ let broadcastJob = {
   terminado_en: null,
 };
 
+// ── Imágenes para los mensajes masivos (guardadas en memoria) ─────
+// Se guardan aquí en vez de en la base de datos porque son temporales:
+// solo hacen falta mientras se redactan y envían los mensajes del evento.
+const imagenesMensajes = new Map(); // id -> { buffer, mimeType }
+
+app.post('/api/admin/subir-imagen', requireAdmin, (req, res) => {
+  const { contenidoBase64, mimeType } = req.body;
+  if (!contenidoBase64 || !mimeType) {
+    return res.status(400).json({ ok: false, error: 'Falta la imagen o su tipo' });
+  }
+  if (!mimeType.startsWith('image/')) {
+    return res.status(400).json({ ok: false, error: 'El archivo debe ser una imagen' });
+  }
+
+  const id = crypto.randomUUID();
+  const buffer = Buffer.from(contenidoBase64, 'base64');
+
+  if (buffer.length > 5 * 1024 * 1024) {
+    return res.status(400).json({ ok: false, error: 'La imagen no debe superar 5 MB' });
+  }
+
+  imagenesMensajes.set(id, { buffer, mimeType });
+  res.json({ ok: true, id, url: `${PUBLIC_BASE_URL}/api/admin/imagen/${id}` });
+});
+
+// Servida SIN clave de administrador: los clientes de correo de cada
+// registrado necesitan poder cargarla al abrir el mensaje.
+app.get('/api/admin/imagen/:id', (req, res) => {
+  const imagen = imagenesMensajes.get(req.params.id);
+  if (!imagen) return res.status(404).send('Imagen no encontrada');
+  res.setHeader('Content-Type', imagen.mimeType);
+  res.setHeader('Cache-Control', 'public, max-age=604800');
+  res.send(imagen.buffer);
+});
+
 // ── Lista de registrados para el panel de administrador ───────────
 app.get('/api/admin/registros', requireAdmin, async (req, res) => {
   const { rows } = await pool.query(`
-    SELECT id, nombre, correo, ocupacion, ciudad, check_in
+    SELECT id, nombre, correo, ocupacion, ciudad, check_in, pagado
     FROM registros ORDER BY created_at
   `);
   res.json(rows);
+});
+
+// ── Marcar / desmarcar pagos ────────────────────────────────────────
+app.post('/api/admin/marcar-pago', requireAdmin, async (req, res) => {
+  const { ids, pagado } = req.body || {};
+  if (!Array.isArray(ids) || ids.length === 0 || typeof pagado !== 'boolean') {
+    return res.status(400).json({ ok: false, error: 'Datos inválidos' });
+  }
+  const idsNum = ids.map(Number).filter(Number.isInteger);
+  const r = await pool.query(
+    `UPDATE registros
+     SET pagado = $1::boolean, pagado_at = CASE WHEN $1::boolean THEN NOW() ELSE NULL END
+     WHERE id = ANY($2::int[])`,
+    [pagado, idsNum]
+  );
+  res.json({ ok: true, actualizados: r.rowCount });
 });
 
 // ── Estado del envío masivo (para la barra de progreso) ────────────
@@ -304,7 +376,7 @@ app.get('/api/admin/estado-envio', requireAdmin, (req, res) => {
 
 // ── Enviar mensaje personalizado a los registrados seleccionados ──
 app.post('/api/admin/enviar-mensaje', requireAdmin, async (req, res) => {
-  const { asunto, mensaje, ids } = req.body;
+  const { asunto, mensaje, ids, imagenUrl } = req.body;
   if (!asunto || !mensaje) {
     return res.status(400).json({ ok: false, error: 'Falta el asunto o el mensaje' });
   }
@@ -342,7 +414,7 @@ app.post('/api/admin/enviar-mensaje', requireAdmin, async (req, res) => {
         from: `${EVENT_NAME} <${FROM_EMAIL}>`,
         to: r.correo,
         subject: personalizar(asunto, r.nombre),
-        html: construirHtmlMensaje(personalizar(mensaje, r.nombre)),
+        html: construirHtmlMensaje(personalizar(mensaje, r.nombre), imagenUrl),
       }));
 
       try {
