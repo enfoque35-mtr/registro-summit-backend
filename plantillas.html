@@ -1,0 +1,297 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="robots" content="noindex">
+<title>Plantillas de mensajes · I Summit</title>
+<style>
+  :root { --navy:#0E2A54; --green:#1e7b4a; --red:#d62828; --bg:#f1f4f8; --line:#d5dce6; --ink:#10222F; --muted:#5b6b7c; }
+  * { box-sizing:border-box; }
+  body { margin:0; font-family:Arial,Helvetica,sans-serif; background:var(--bg); color:var(--ink); }
+  header { background:var(--navy); color:#fff; padding:16px 20px; display:flex; justify-content:space-between; align-items:center; gap:12px; flex-wrap:wrap; }
+  header h1 { margin:0; font-size:18px; }
+  header small { opacity:.8; }
+  main { max-width:1100px; margin:0 auto; padding:20px 16px 60px; }
+  .card { background:#fff; border:1px solid var(--line); border-radius:10px; padding:18px; margin-bottom:18px; }
+  h2 { margin:0 0 12px; font-size:16px; color:var(--navy); }
+  label { display:block; font-size:13px; font-weight:bold; margin:12px 0 4px; }
+  input[type=text], input[type=password], select, textarea { width:100%; padding:10px; border:1px solid var(--line); border-radius:6px; font-size:14px; font-family:inherit; }
+  textarea { min-height:260px; font-family:Consolas,monospace; font-size:13px; }
+  button { cursor:pointer; border:0; border-radius:6px; padding:10px 16px; font-size:14px; font-weight:bold; }
+  .primary { background:var(--navy); color:#fff; }
+  .ok { background:var(--green); color:#fff; }
+  .danger { background:#fff; color:var(--red); border:1px solid var(--red); }
+  .ghost { background:#fff; color:var(--navy); border:1px solid var(--navy); }
+  button:disabled { opacity:.5; cursor:not-allowed; }
+  .row { display:flex; gap:10px; flex-wrap:wrap; align-items:center; }
+  .grid { display:grid; grid-template-columns:1fr 1fr; gap:18px; }
+  @media (max-width:820px) { .grid { grid-template-columns:1fr; } }
+  .msg { font-size:13px; margin-top:10px; min-height:18px; }
+  .msg.err { color:var(--red); } .msg.good { color:var(--green); }
+  iframe { width:100%; height:520px; border:1px solid var(--line); border-radius:8px; background:#fff; }
+  .hint { font-size:12px; color:var(--muted); margin-top:4px; }
+  .bar { height:10px; background:#e3e9f0; border-radius:6px; overflow:hidden; margin-top:10px; }
+  .bar > div { height:100%; width:0; background:var(--green); transition:width .4s; }
+  .pill { display:inline-block; font-size:12px; padding:2px 8px; border-radius:20px; background:#e8eef7; color:var(--navy); }
+  #app { display:none; }
+</style>
+</head>
+<body>
+<header>
+  <h1>✉️ Plantillas de mensajes · I Summit Comunicación Política</h1>
+  <small id="resumen"></small>
+</header>
+
+<main>
+  <!-- Acceso -->
+  <div class="card" id="acceso">
+    <h2>Acceso</h2>
+    <label for="clave">Clave de administrador</label>
+    <input type="password" id="clave" placeholder="Escribe tu clave" autocomplete="current-password">
+    <div class="row" style="margin-top:12px">
+      <button class="primary" id="btnEntrar">Entrar</button>
+    </div>
+    <div class="msg" id="msgAcceso"></div>
+  </div>
+
+  <div id="app">
+    <!-- Elegir plantilla -->
+    <div class="card">
+      <h2>1. Elige una plantilla</h2>
+      <select id="selPlantilla"></select>
+      <div class="hint">Al elegirla se cargan el asunto, el mensaje y los destinatarios que le corresponden.</div>
+    </div>
+
+    <div class="grid">
+      <!-- Editor -->
+      <div class="card">
+        <h2>2. Edita o crea (opcional)</h2>
+        <label for="nombre">Nombre de la plantilla</label>
+        <input type="text" id="nombre">
+        <label for="audiencia">Destinatarios de esta plantilla</label>
+        <select id="audiencia">
+          <option value="pagados">Solo los que ya pagaron</option>
+          <option value="nopagados">Solo los que NO han pagado</option>
+          <option value="todos">Todos los registrados</option>
+        </select>
+        <label for="asunto">Asunto</label>
+        <input type="text" id="asunto">
+        <label for="mensaje">Mensaje (HTML)</label>
+        <textarea id="mensaje" spellcheck="false"></textarea>
+        <div class="hint">Variables: <b>{{nombre}}</b> (nombre de la persona) y <b>{{token}}</b> (para el código QR).</div>
+        <div class="row" style="margin-top:14px">
+          <button class="ok" id="btnGuardar">Guardar cambios</button>
+          <button class="ghost" id="btnNueva">Guardar como nueva</button>
+          <button class="danger" id="btnEliminar">Eliminar</button>
+        </div>
+        <div class="msg" id="msgGuardar"></div>
+      </div>
+
+      <!-- Vista previa -->
+      <div class="card">
+        <h2>Vista previa</h2>
+        <iframe id="preview" sandbox="" title="Vista previa del correo"></iframe>
+        <div class="hint">El código QR aparece en el envío real (aquí no hay un token de verdad).</div>
+      </div>
+    </div>
+
+    <!-- Envío -->
+    <div class="card">
+      <h2>3. Enviar</h2>
+      <label for="destino">¿A quién se envía?</label>
+      <select id="destino">
+        <option value="pagados">Solo los que ya pagaron</option>
+        <option value="nopagados">Solo los que NO han pagado</option>
+        <option value="todos">Todos los registrados</option>
+        <option value="prueba">Prueba: solo a una persona</option>
+      </select>
+      <div id="bloquePrueba" style="display:none">
+        <label for="selPersona">Persona para la prueba</label>
+        <select id="selPersona"></select>
+      </div>
+      <div class="hint" id="conteo"></div>
+      <div class="row" style="margin-top:14px">
+        <button class="primary" id="btnEnviar">📨 Enviar ahora</button>
+      </div>
+      <div class="bar"><div id="barra"></div></div>
+      <div class="msg" id="msgEnvio"></div>
+    </div>
+  </div>
+</main>
+
+<script>
+(function () {
+  var clave = '';
+  var plantillas = [];
+  var registros = [];
+  var actual = null;
+  var timer = null;
+  var $ = function (id) { return document.getElementById(id); };
+
+  function api(ruta, opts) {
+    opts = opts || {};
+    opts.headers = Object.assign({ 'Content-Type': 'application/json', 'x-admin-key': clave }, opts.headers || {});
+    return fetch(ruta, opts).then(function (r) {
+      return r.json().catch(function () { return {}; }).then(function (data) {
+        if (!r.ok) { var e = new Error(data.error || ('Error ' + r.status)); e.status = r.status; throw e; }
+        return data;
+      });
+    });
+  }
+  function setMsg(id, texto, tipo) { var el = $(id); el.textContent = texto || ''; el.className = 'msg ' + (tipo || ''); }
+
+  // ── Acceso ──
+  function entrar() {
+    clave = $('clave').value.trim();
+    if (!clave) return setMsg('msgAcceso', 'Escribe la clave', 'err');
+    setMsg('msgAcceso', 'Verificando…');
+    Promise.all([api('/api/admin/plantillas'), api('/api/admin/registros')]).then(function (res) {
+      plantillas = res[0]; registros = res[1];
+      try { sessionStorage.setItem('clave_summit', clave); } catch (e) {}
+      $('acceso').style.display = 'none';
+      $('app').style.display = 'block';
+      pintarSelector(); pintarPersonas(); actualizarConteo();
+      if (plantillas.length) elegir(plantillas[0].id);
+    }).catch(function (e) {
+      setMsg('msgAcceso', e.status === 401 ? 'Clave incorrecta' : e.message, 'err');
+    });
+  }
+  $('btnEntrar').onclick = entrar;
+  $('clave').addEventListener('keydown', function (e) { if (e.key === 'Enter') entrar(); });
+  try { var g = sessionStorage.getItem('clave_summit'); if (g) { $('clave').value = g; entrar(); } } catch (e) {}
+
+  // ── Plantillas ──
+  function pintarSelector(seleccionarId) {
+    var sel = $('selPlantilla'); sel.innerHTML = '';
+    plantillas.forEach(function (p) {
+      var o = document.createElement('option'); o.value = p.id; o.textContent = p.nombre; sel.appendChild(o);
+    });
+    if (seleccionarId) sel.value = seleccionarId;
+  }
+  function elegir(id) {
+    actual = plantillas.find(function (p) { return String(p.id) === String(id); }) || null;
+    if (!actual) return;
+    $('selPlantilla').value = actual.id;
+    $('nombre').value = actual.nombre;
+    $('audiencia').value = actual.audiencia;
+    $('asunto').value = actual.asunto;
+    $('mensaje').value = actual.mensaje;
+    $('destino').value = actual.audiencia;
+    $('bloquePrueba').style.display = 'none';
+    setMsg('msgGuardar', ''); setMsg('msgEnvio', '');
+    previsualizar(); actualizarConteo();
+  }
+  $('selPlantilla').onchange = function () { elegir(this.value); };
+
+  function previsualizar() {
+    var cuerpo = $('mensaje').value.split('{{nombre}}').join('Nombre de ejemplo');
+    var html = '<div style="font-family:Arial,sans-serif;max-width:480px;margin:0 auto;padding:24px;">' +
+      '<p style="color:#0E2A54;font-weight:700;font-size:13px;letter-spacing:.03em;text-transform:uppercase;">I Summit Comunicación Política</p>' +
+      '<div style="color:#10222F;font-size:15px;line-height:1.7;margin-top:12px;">' + cuerpo + '</div></div>';
+    $('preview').srcdoc = html;
+  }
+  $('mensaje').addEventListener('input', previsualizar);
+
+  function datosEditor() {
+    return {
+      nombre: $('nombre').value.trim(), audiencia: $('audiencia').value,
+      asunto: $('asunto').value.trim(), mensaje: $('mensaje').value
+    };
+  }
+  function guardar(comoNueva) {
+    var d = datosEditor();
+    if (!d.nombre || !d.asunto || !d.mensaje.trim()) return setMsg('msgGuardar', 'Completa nombre, asunto y mensaje', 'err');
+    if (!comoNueva && actual) d.id = actual.id;
+    setMsg('msgGuardar', 'Guardando…');
+    api('/api/admin/plantillas', { method: 'POST', body: JSON.stringify(d) }).then(function (r) {
+      return api('/api/admin/plantillas').then(function (lista) {
+        plantillas = lista; pintarSelector(r.id); elegir(r.id);
+        setMsg('msgGuardar', comoNueva ? 'Plantilla nueva guardada ✅' : 'Cambios guardados ✅', 'good');
+      });
+    }).catch(function (e) { setMsg('msgGuardar', e.message, 'err'); });
+  }
+  $('btnGuardar').onclick = function () { if (!actual) return guardar(true); guardar(false); };
+  $('btnNueva').onclick = function () {
+    if (actual && $('nombre').value.trim() === actual.nombre) {
+      var n = prompt('Nombre para la plantilla nueva:', actual.nombre + ' (copia)');
+      if (!n) return; $('nombre').value = n;
+    }
+    guardar(true);
+  };
+  $('btnEliminar').onclick = function () {
+    if (!actual) return;
+    if (!confirm('¿Eliminar la plantilla "' + actual.nombre + '"? Esto no se puede deshacer.')) return;
+    api('/api/admin/plantillas/' + actual.id, { method: 'DELETE' }).then(function () {
+      return api('/api/admin/plantillas');
+    }).then(function (lista) {
+      plantillas = lista; actual = null; pintarSelector();
+      if (plantillas.length) elegir(plantillas[0].id);
+      else { $('nombre').value = ''; $('asunto').value = ''; $('mensaje').value = ''; previsualizar(); }
+      setMsg('msgGuardar', 'Plantilla eliminada', 'good');
+    }).catch(function (e) { setMsg('msgGuardar', e.message, 'err'); });
+  };
+
+  // ── Destinatarios ──
+  function pintarPersonas() {
+    var sel = $('selPersona'); sel.innerHTML = '';
+    registros.forEach(function (r) {
+      var o = document.createElement('option'); o.value = r.id;
+      o.textContent = r.nombre + ' · ' + r.correo; sel.appendChild(o);
+    });
+    var pag = registros.filter(function (r) { return r.pagado; }).length;
+    $('resumen').textContent = registros.length + ' registrados · ' + pag + ' pagados · ' + (registros.length - pag) + ' pendientes';
+  }
+  function destinatarios() {
+    var d = $('destino').value;
+    if (d === 'prueba') return registros.filter(function (r) { return String(r.id) === $('selPersona').value; });
+    if (d === 'pagados') return registros.filter(function (r) { return r.pagado; });
+    if (d === 'nopagados') return registros.filter(function (r) { return !r.pagado; });
+    return registros.slice();
+  }
+  function actualizarConteo() {
+    $('bloquePrueba').style.display = $('destino').value === 'prueba' ? 'block' : 'none';
+    var n = destinatarios().length;
+    $('conteo').textContent = 'Se enviará a ' + n + (n === 1 ? ' persona.' : ' personas.');
+  }
+  $('destino').onchange = actualizarConteo;
+  $('selPersona').onchange = actualizarConteo;
+
+  // ── Envío ──
+  $('btnEnviar').onclick = function () {
+    var dest = destinatarios();
+    var d = datosEditor();
+    if (!dest.length) return setMsg('msgEnvio', 'No hay destinatarios en esa selección', 'err');
+    if (!d.asunto || !d.mensaje.trim()) return setMsg('msgEnvio', 'Falta el asunto o el mensaje', 'err');
+    var etiqueta = { pagados: 'los que YA PAGARON', nopagados: 'los que NO HAN PAGADO', todos: 'TODOS los registrados', prueba: 'una persona (prueba)' }[$('destino').value];
+    if (actual && $('destino').value !== 'prueba' && $('destino').value !== actual.audiencia) {
+      if (!confirm('⚠️ Esta plantilla está pensada para otro grupo.\n\nPlantilla: ' + actual.nombre + '\nEnviarás a: ' + etiqueta + '\n\n¿Seguro que quieres continuar?')) return;
+    }
+    if (!confirm('Vas a enviar "' + d.asunto + '" a ' + dest.length + ' persona(s): ' + etiqueta + '.\n\n¿Enviar ahora?')) return;
+
+    $('btnEnviar').disabled = true; setMsg('msgEnvio', 'Iniciando envío…');
+    api('/api/admin/enviar-mensaje', {
+      method: 'POST',
+      body: JSON.stringify({ asunto: d.asunto, mensaje: d.mensaje, ids: dest.map(function (r) { return r.id; }), modoHtml: true })
+    }).then(function (r) {
+      setMsg('msgEnvio', r.mensaje || 'Envío iniciado');
+      seguirProgreso();
+    }).catch(function (e) { $('btnEnviar').disabled = false; setMsg('msgEnvio', e.message, 'err'); });
+  };
+  function seguirProgreso() {
+    clearInterval(timer);
+    timer = setInterval(function () {
+      api('/api/admin/estado-envio').then(function (s) {
+        var pct = s.total ? Math.round(((s.enviados + s.fallidos) / s.total) * 100) : 0;
+        $('barra').style.width = pct + '%';
+        if (s.running) { setMsg('msgEnvio', 'Enviando… ' + (s.enviados + s.fallidos) + ' de ' + s.total); return; }
+        clearInterval(timer); $('btnEnviar').disabled = false;
+        if (s.fallidos > 0) setMsg('msgEnvio', 'Terminó: ' + s.enviados + ' enviados y ' + s.fallidos + ' con error', 'err');
+        else setMsg('msgEnvio', 'Listo ✅ ' + s.enviados + ' mensajes enviados', 'good');
+      }).catch(function () {});
+    }, 1500);
+  }
+})();
+</script>
+</body>
+</html>
