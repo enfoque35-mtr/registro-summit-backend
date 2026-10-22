@@ -283,8 +283,10 @@ function personalizar(texto, nombre) {
 function escaparHtml(s) {
   return String(s || '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }
-function personalizarCuerpo(texto, nombre) {
-  return (texto || '').replaceAll('{{nombre}}', escaparHtml(nombre));
+function personalizarCuerpo(texto, nombre, token) {
+  return (texto || '')
+    .replaceAll('{{nombre}}', escaparHtml(nombre))
+    .replaceAll('{{token}}', token || '');
 }
 
 function construirHtmlMensaje(cuerpoPersonalizado, imagenUrl, modoHtml = false) {
@@ -395,8 +397,8 @@ app.post('/api/admin/enviar-mensaje', requireAdmin, async (req, res) => {
   // Si "ids" viene con una lista de IDs, solo se envía a esos. Si no viene o viene vacía, se envía a todos.
   const { rows } =
     Array.isArray(ids) && ids.length > 0
-      ? await pool.query(`SELECT nombre, correo FROM registros WHERE id = ANY($1)`, [ids])
-      : await pool.query(`SELECT nombre, correo FROM registros`);
+      ? await pool.query(`SELECT nombre, correo, token FROM registros WHERE id = ANY($1)`, [ids])
+      : await pool.query(`SELECT nombre, correo, token FROM registros`);
 
   if (rows.length === 0) {
     return res.status(400).json({ ok: false, error: 'No hay destinatarios para enviar' });
@@ -422,7 +424,7 @@ app.post('/api/admin/enviar-mensaje', requireAdmin, async (req, res) => {
         from: `${EVENT_NAME} <${FROM_EMAIL}>`,
         to: r.correo,
         subject: personalizar(asunto, r.nombre),
-        html: construirHtmlMensaje(personalizarCuerpo(mensaje, r.nombre), imagenUrl, modoHtml === true),
+        html: construirHtmlMensaje(personalizarCuerpo(mensaje, r.nombre, r.token), imagenUrl, modoHtml === true),
       }));
 
       try {
