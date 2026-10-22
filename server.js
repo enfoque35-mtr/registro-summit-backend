@@ -28,6 +28,7 @@ const { Pool } = require('pg');
 const { Resend } = require('resend');
 const crypto = require('crypto');
 const ExcelJS = require('exceljs');
+const path = require('path');
 
 const app = express();
 app.use(cors());
@@ -45,6 +46,117 @@ const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
   ssl: process.env.DATABASE_URL?.includes('railway') ? { rejectUnauthorized: false } : false,
 });
+
+
+// ── Plantillas de mensajes (guardadas en la base de datos) ───────
+const QR_URL = `${PUBLIC_BASE_URL}/api/qr/{{token}}`;
+
+const PLANTILLAS_INICIALES = [
+  {
+    nombre: '1. Último llamado de pago (no pagados)',
+    audiencia: 'nopagados',
+    asunto: '⏰ Últimas horas para tu cupo en el I Summit de Comunicación Política',
+    mensaje: `<div style="background-color:#d62828;padding:10px;text-align:center;font-size:15px;font-weight:bold;color:#ffffff;border-radius:4px;">
+  🚨 ¡ARRANCA MAÑANA! 🚨
+</div>
+
+<p>Hola <strong>{{nombre}}</strong> 👋,</p>
+
+<p>⏰ El <strong>I SUMMIT DE COMUNICACIÓN POLÍTICA</strong> arranca <strong>mañana</strong> y estamos <strong>cerrando la lista de asistentes</strong>.</p>
+
+<p>Tu nombre sigue en nuestro radar y no queremos que te quedes por fuera. Si todavía no has pagado, 🔥 <strong>hoy es el último día para asegurar tu cupo</strong>.</p>
+
+<div style="background-color:#f0f5fb;border-left:4px solid #1f3a5f;padding:14px 18px;margin:20px 0;border-radius:4px;">
+  <p style="margin:0 0 8px 0;">💳 <strong>Datos para tu pago</strong></p>
+  <strong>Bancolombia, cuenta de ahorros</strong><br>
+  <strong>Número: 56922771541</strong><br>
+  <strong>Titular: Katia Milena Polo Herrera</strong><br>
+  <strong>C.C. 1067843531</strong>
+</div>
+
+<p>📲 Cuando lo hagas, <strong>envía el comprobante al WhatsApp +57 310 7089040</strong> y te confirmamos tu entrada de inmediato. Si tienes cualquier duda, <strong>escríbenos a ese mismo número</strong>.</p>
+
+<p>Será una jornada de <strong>ideas, estrategia y contactos de primer nivel</strong> con quienes hacen <strong>comunicación política</strong> en serio. ⚠️ <strong>Esas conversaciones no se repiten</strong>, y queremos que estés en ellas.</p>
+
+<p>✅ Si ya realizaste tu pago, gracias, <strong>nos vemos mañana</strong>.</p>
+
+<p><strong>¡Te esperamos!</strong> 🙌<br>
+Equipo I Summit de Comunicación Política</p>`,
+  },
+  {
+    nombre: '2. Recordatorio: mañana es el día (pagados, con QR)',
+    audiencia: 'pagados',
+    asunto: '🎉 ¡Mañana es el día! Tu cupo en el I Summit de Comunicación Política está confirmado',
+    mensaje: `<div style="background-color:#1e7b4a;padding:10px;text-align:center;font-size:15px;font-weight:bold;color:#ffffff;border-radius:4px;">
+  🎉 ¡MAÑANA ES EL DÍA! 🎉
+</div>
+
+<p>Hola <strong>{{nombre}}</strong> 👋,</p>
+
+<p>✅ <strong>Tu pago está confirmado</strong> y tu cupo en el <strong>I SUMMIT DE COMUNICACIÓN POLÍTICA</strong> está asegurado. ¡Gracias por hacer parte!</p>
+
+<p>⏰ Te recordamos que el evento es <strong>mañana</strong>. Estos son los datos para que no te falte nada:</p>
+
+<div style="background-color:#eaf5ee;border-left:4px solid #1e7b4a;padding:14px 18px;margin:20px 0;border-radius:4px;">
+  📅 <strong>Fecha:</strong> Mañana, viernes 23 de octubre<br>
+  🕐 <strong>Hora:</strong> 8:00 a. m.<br>
+  📍 <strong>Lugar:</strong> Auditorio Cultural de la Universidad de Córdoba, Montería
+</div>
+
+<div style="text-align:center;border:2px dashed #1e7b4a;border-radius:8px;padding:20px;margin:24px 0;">
+  <p style="margin:0 0 12px 0;">🎟️ <strong>Tu código QR de ingreso</strong></p>
+  <img src="${QR_URL}" width="220" height="220" alt="Código QR de ingreso" style="width:220px;height:220px;display:block;margin:0 auto;">
+  <p style="margin:12px 0 0 0;font-size:14px;color:#444;"><strong>Preséntalo en la entrada</strong> desde tu celular o impreso. Es personal e intransferible.</p>
+</div>
+
+<p>Te recomendamos <strong>llegar con tiempo</strong> para el registro y para que no te pierdas nada del arranque.</p>
+
+<p>Será una jornada de <strong>ideas, estrategia y contactos de primer nivel</strong> con quienes hacen <strong>comunicación política</strong> en serio. 🚀</p>
+
+<p>📲 Si tienes cualquier duda, <strong>escríbenos al WhatsApp +57 310 7089040</strong>.</p>
+
+<p><strong>¡Te esperamos mañana!</strong> 🙌<br>
+Equipo I Summit de Comunicación Política</p>`,
+  },
+  {
+    nombre: '3. Llegó el gran día (pagados, con QR)',
+    audiencia: 'pagados',
+    asunto: '🎉 ¡Llegó el gran día! Hoy es el I Summit de Comunicación Política',
+    mensaje: `<div style="background-color:#1e7b4a;padding:12px;text-align:center;font-size:16px;font-weight:bold;color:#ffffff;border-radius:4px;">
+  🎉 ¡LLEGÓ EL GRAN DÍA! 🎉
+</div>
+
+<p>Buenos días, <strong>{{nombre}}</strong> ☀️,</p>
+
+<p>¡Hoy es el día! 🙌 El <strong>I SUMMIT DE COMUNICACIÓN POLÍTICA</strong> comienza en pocos minutos y tu lugar ya está reservado. Gracias por ser parte de este primer encuentro.</p>
+
+<div style="background-color:#eaf5ee;border-left:4px solid #1e7b4a;padding:14px 18px;margin:20px 0;border-radius:4px;">
+  📅 <strong>Fecha:</strong> Hoy, viernes 23 de octubre<br>
+  🕐 <strong>Hora:</strong> 8:00 a. m.<br>
+  📍 <strong>Lugar:</strong> Auditorio Cultural de la Universidad de Córdoba, Montería
+</div>
+
+<div style="text-align:center;border:2px dashed #1e7b4a;border-radius:8px;padding:20px;margin:24px 0;">
+  <p style="margin:0 0 12px 0;">🎟️ <strong>Tu código QR de ingreso</strong></p>
+  <img src="${QR_URL}" width="220" height="220" alt="Código QR de ingreso" style="width:220px;height:220px;display:block;margin:0 auto;">
+  <p style="margin:12px 0 0 0;font-size:14px;color:#444;"><strong>Tenlo listo en tu celular</strong> para mostrarlo en la entrada. Es personal e intransferible.</p>
+</div>
+
+<p><strong>Al llegar:</strong></p>
+<p>
+✅ Ten tu QR a la mano (sube el brillo de la pantalla)<br>
+✅ Lleva tu documento de identidad<br>
+✅ Pasa primero por el registro 🚶‍♂️
+</p>
+
+<p>Será una jornada de <strong>ideas, estrategia y contactos de primer nivel</strong> con quienes hacen <strong>comunicación política</strong> en serio. 🚀</p>
+
+<p>📲 ¿Alguna duda de último momento? <strong>Escríbenos al WhatsApp +57 310 7089040</strong>.</p>
+
+<p><strong>¡Nos vemos muy pronto!</strong> 🙌<br>
+Equipo I Summit de Comunicación Política</p>`,
+  },
+];
 
 async function initDb() {
   await pool.query(`
@@ -72,6 +184,28 @@ async function initDb() {
   // Control de pagos (se marca manualmente desde el panel)
   await pool.query(`ALTER TABLE registros ADD COLUMN IF NOT EXISTS pagado BOOLEAN DEFAULT FALSE`);
   await pool.query(`ALTER TABLE registros ADD COLUMN IF NOT EXISTS pagado_at TIMESTAMP`);
+
+  // Plantillas de mensajes
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS plantillas (
+      id          SERIAL PRIMARY KEY,
+      nombre      TEXT UNIQUE NOT NULL,
+      audiencia   TEXT NOT NULL DEFAULT 'todos',
+      asunto      TEXT NOT NULL,
+      mensaje     TEXT NOT NULL,
+      updated_at  TIMESTAMP DEFAULT NOW()
+    )
+  `);
+  // Solo se cargan las plantillas iniciales si la tabla está vacía
+  const { rows: cnt } = await pool.query(`SELECT COUNT(*)::int AS n FROM plantillas`);
+  if (cnt[0].n === 0) {
+    for (const t of PLANTILLAS_INICIALES) {
+      await pool.query(
+        `INSERT INTO plantillas (nombre, audiencia, asunto, mensaje) VALUES ($1, $2, $3, $4)`,
+        [t.nombre, t.audiencia, t.asunto, t.mensaje]
+      );
+    }
+  }
 }
 
 // ── Validación mínima ────────────────────────────────────────────
@@ -438,6 +572,54 @@ app.post('/api/admin/enviar-mensaje', requireAdmin, async (req, res) => {
     broadcastJob.running = false;
     broadcastJob.terminado_en = new Date().toISOString();
   })();
+});
+
+// ── Página de plantillas (se entra con la clave de administrador) ──
+app.get('/plantillas', (req, res) => {
+  res.sendFile(path.join(__dirname, 'plantillas.html'));
+});
+
+app.get('/api/admin/plantillas', requireAdmin, async (req, res) => {
+  const { rows } = await pool.query(
+    `SELECT id, nombre, audiencia, asunto, mensaje, updated_at FROM plantillas ORDER BY id`
+  );
+  res.json(rows);
+});
+
+// Crea una plantilla nueva (sin id) o actualiza una existente (con id)
+app.post('/api/admin/plantillas', requireAdmin, async (req, res) => {
+  const { id, nombre, audiencia, asunto, mensaje } = req.body || {};
+  const audiencias = ['todos', 'pagados', 'nopagados'];
+  if (!nombre || !asunto || !mensaje || !audiencias.includes(audiencia)) {
+    return res.status(400).json({ ok: false, error: 'Faltan datos de la plantilla' });
+  }
+  try {
+    if (id) {
+      const r = await pool.query(
+        `UPDATE plantillas SET nombre=$1, audiencia=$2, asunto=$3, mensaje=$4, updated_at=NOW()
+         WHERE id=$5 RETURNING id`,
+        [nombre.trim(), audiencia, asunto, mensaje, Number(id)]
+      );
+      if (r.rowCount === 0) return res.status(404).json({ ok: false, error: 'Plantilla no encontrada' });
+      return res.json({ ok: true, id: r.rows[0].id });
+    }
+    const r = await pool.query(
+      `INSERT INTO plantillas (nombre, audiencia, asunto, mensaje) VALUES ($1,$2,$3,$4) RETURNING id`,
+      [nombre.trim(), audiencia, asunto, mensaje]
+    );
+    res.json({ ok: true, id: r.rows[0].id });
+  } catch (e) {
+    if (e.code === '23505') {
+      return res.status(409).json({ ok: false, error: 'Ya existe una plantilla con ese nombre' });
+    }
+    console.error(e);
+    res.status(500).json({ ok: false, error: 'No se pudo guardar la plantilla' });
+  }
+});
+
+app.delete('/api/admin/plantillas/:id', requireAdmin, async (req, res) => {
+  const r = await pool.query(`DELETE FROM plantillas WHERE id = $1`, [Number(req.params.id)]);
+  res.json({ ok: true, eliminadas: r.rowCount });
 });
 
 const PORT = process.env.PORT || 3000;
