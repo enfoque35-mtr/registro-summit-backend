@@ -347,7 +347,7 @@ app.get('/api/admin/imagen/:id', (req, res) => {
 // ── Lista de registrados para el panel de administrador ───────────
 app.get('/api/admin/registros', requireAdmin, async (req, res) => {
   const { rows } = await pool.query(`
-    SELECT id, nombre, correo, ocupacion, ciudad, check_in, pagado
+    SELECT id, nombre, correo, ocupacion, ciudad, telefono, check_in, pagado
     FROM registros ORDER BY created_at
   `);
   res.json(rows);
