@@ -279,7 +279,15 @@ function personalizar(texto, nombre) {
   return (texto || '').replaceAll('{{nombre}}', nombre);
 }
 
-function construirHtmlMensaje(cuerpoPersonalizado, imagenUrl) {
+// Para el cuerpo: el nombre del registrado se escapa para que no pueda inyectar HTML
+function escaparHtml(s) {
+  return String(s || '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+function personalizarCuerpo(texto, nombre) {
+  return (texto || '').replaceAll('{{nombre}}', escaparHtml(nombre));
+}
+
+function construirHtmlMensaje(cuerpoPersonalizado, imagenUrl, modoHtml = false) {
   const bloqueImagen = imagenUrl
     ? `<div style="text-align:center; margin:20px 0;">
          <img src="${imagenUrl}" alt="" style="max-width:100%; border-radius:4px;" />
@@ -292,7 +300,7 @@ function construirHtmlMensaje(cuerpoPersonalizado, imagenUrl) {
         ${EVENT_NAME}
       </p>
       ${bloqueImagen}
-      <div style="color:#10222F; font-size:15px; line-height:1.7; white-space:pre-line; margin-top:12px;">
+      <div style="color:#10222F; font-size:15px; line-height:1.7; ${modoHtml ? '' : 'white-space:pre-line;'} margin-top:12px;">
         ${cuerpoPersonalizado}
       </div>
     </div>
@@ -376,7 +384,7 @@ app.get('/api/admin/estado-envio', requireAdmin, (req, res) => {
 
 // ── Enviar mensaje personalizado a los registrados seleccionados ──
 app.post('/api/admin/enviar-mensaje', requireAdmin, async (req, res) => {
-  const { asunto, mensaje, ids, imagenUrl } = req.body;
+  const { asunto, mensaje, ids, imagenUrl, modoHtml } = req.body;
   if (!asunto || !mensaje) {
     return res.status(400).json({ ok: false, error: 'Falta el asunto o el mensaje' });
   }
@@ -414,7 +422,7 @@ app.post('/api/admin/enviar-mensaje', requireAdmin, async (req, res) => {
         from: `${EVENT_NAME} <${FROM_EMAIL}>`,
         to: r.correo,
         subject: personalizar(asunto, r.nombre),
-        html: construirHtmlMensaje(personalizar(mensaje, r.nombre), imagenUrl),
+        html: construirHtmlMensaje(personalizarCuerpo(mensaje, r.nombre), imagenUrl, modoHtml === true),
       }));
 
       try {
