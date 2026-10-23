@@ -35,6 +35,14 @@
   .bar > div { height:100%; width:0; background:var(--green); transition:width .4s; }
   .pill { display:inline-block; font-size:12px; padding:2px 8px; border-radius:20px; background:#e8eef7; color:var(--navy); }
   #app { display:none; }
+  .resultado { display:flex; justify-content:space-between; align-items:center; gap:10px; padding:8px 10px; border:1px solid var(--line); border-radius:6px; margin-top:6px; font-size:13px; }
+  .resultado small { color:var(--muted); display:block; }
+  .resultado button { padding:6px 12px; font-size:13px; }
+  .chips { display:flex; flex-wrap:wrap; gap:6px; margin-top:10px; }
+  .chip { background:#e8eef7; color:var(--navy); border-radius:20px; padding:5px 6px 5px 12px; font-size:13px; display:inline-flex; align-items:center; gap:6px; }
+  .chip button { background:var(--navy); color:#fff; border-radius:50%; width:20px; height:20px; padding:0; font-size:12px; line-height:20px; }
+  .tag { font-size:11px; font-weight:bold; padding:2px 7px; border-radius:20px; }
+  .tag.si { background:#dff3e7; color:#1e7b4a; } .tag.no { background:#fde7e7; color:#d62828; }
 </style>
 </head>
 <body>
@@ -104,11 +112,26 @@
         <option value="pagados">Solo los que ya pagaron</option>
         <option value="nopagados">Solo los que NO han pagado</option>
         <option value="todos">Todos los registrados</option>
-        <option value="prueba">Prueba: solo a una persona</option>
+        <option value="buscar">Buscar personas por nombre (una por una)</option>
+        <option value="lista">Cargar una lista (pegar o subir archivo)</option>
       </select>
-      <div id="bloquePrueba" style="display:none">
-        <label for="selPersona">Persona para la prueba</label>
-        <select id="selPersona"></select>
+      <div id="bloqueBuscar" style="display:none">
+        <label for="buscador">Buscar por nombre, correo o celular</label>
+        <input type="text" id="buscador" placeholder="Escribe el nombre de la persona…" autocomplete="off">
+        <div id="resultados"></div>
+        <label>Personas seleccionadas</label>
+        <div class="chips" id="chips"></div>
+        <div class="row" style="margin-top:10px"><button class="ghost" id="btnLimpiar" type="button">Quitar a todas</button></div>
+      </div>
+      <div id="bloqueLista" style="display:none">
+        <label for="textoLista">Pega aquí la lista (Nombre y Correo, una persona por línea)</label>
+        <textarea id="textoLista" style="min-height:140px" placeholder="Ana Pérez&#9;ana@correo.com&#10;Luis Gómez, luis@correo.com"></textarea>
+        <div class="row" style="margin-top:8px">
+          <input type="file" id="archivoLista" accept=".csv,.txt,text/csv,text/plain">
+          <button class="ghost" id="btnProcesar" type="button">Procesar lista</button>
+        </div>
+        <div class="hint">Puedes copiar las columnas Nombre y Correo desde Excel y pegarlas. También puedes subir un archivo .csv o .txt. Los correos mal escritos se separan y no frenan el envío.</div>
+        <div class="msg" id="resumenLista"></div>
       </div>
       <div class="hint" id="conteo"></div>
       <div class="row" style="margin-top:14px">
@@ -177,8 +200,7 @@
     $('audiencia').value = actual.audiencia;
     $('asunto').value = actual.asunto;
     $('mensaje').value = actual.mensaje;
-    $('destino').value = actual.audiencia;
-    $('bloquePrueba').style.display = 'none';
+    if ($('destino').value !== 'buscar') $('destino').value = actual.audiencia;
     setMsg('msgGuardar', ''); setMsg('msgEnvio', '');
     previsualizar(); actualizarConteo();
   }
@@ -233,29 +255,100 @@
   };
 
   // ── Destinatarios ──
+  var seleccion = {};   // id -> registro
+  var listaCargada = []; // [{nombre, correo}]
+  function norm(t) { return String(t || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase(); }
+
   function pintarPersonas() {
-    var sel = $('selPersona'); sel.innerHTML = '';
-    registros.forEach(function (r) {
-      var o = document.createElement('option'); o.value = r.id;
-      o.textContent = r.nombre + ' · ' + r.correo; sel.appendChild(o);
-    });
     var pag = registros.filter(function (r) { return r.pagado; }).length;
     $('resumen').textContent = registros.length + ' registrados · ' + pag + ' pagados · ' + (registros.length - pag) + ' pendientes';
+    pintarResultados(); pintarChips();
   }
+  function pintarResultados() {
+    var cont = $('resultados'); cont.innerHTML = '';
+    var q = norm($('buscador').value.trim());
+    if (!q) return;
+    var partes = q.split(/\s+/);
+    var hallados = registros.filter(function (r) {
+      var pajar = norm(r.nombre + ' ' + r.correo + ' ' + r.telefono);
+      return partes.every(function (p) { return pajar.indexOf(p) !== -1; });
+    });
+    if (!hallados.length) { cont.innerHTML = '<div class="hint">Sin resultados</div>'; return; }
+    hallados.slice(0, 15).forEach(function (r) {
+      var fila = document.createElement('div'); fila.className = 'resultado';
+      var info = document.createElement('div');
+      var nom = document.createElement('strong'); nom.textContent = r.nombre;
+      var tag = document.createElement('span'); tag.className = 'tag ' + (r.pagado ? 'si' : 'no'); tag.textContent = r.pagado ? 'Pagó' : 'Pendiente'; tag.style.marginLeft = '8px';
+      var sub = document.createElement('small'); sub.textContent = r.correo + ' · ' + (r.telefono || '');
+      info.appendChild(nom); info.appendChild(tag); info.appendChild(sub);
+      var btn = document.createElement('button'); btn.type = 'button';
+      var ya = !!seleccion[r.id];
+      btn.className = ya ? 'ghost' : 'ok'; btn.textContent = ya ? 'Quitar' : 'Agregar';
+      btn.onclick = function () { if (seleccion[r.id]) delete seleccion[r.id]; else seleccion[r.id] = r; pintarResultados(); pintarChips(); actualizarConteo(); };
+      fila.appendChild(info); fila.appendChild(btn); cont.appendChild(fila);
+    });
+    if (hallados.length > 15) { var m = document.createElement('div'); m.className = 'hint'; m.textContent = 'Hay ' + hallados.length + ' resultados, mostrando 15. Escribe más del nombre para afinar.'; cont.appendChild(m); }
+  }
+  function pintarChips() {
+    var cont = $('chips'); cont.innerHTML = '';
+    var ids = Object.keys(seleccion);
+    if (!ids.length) { cont.innerHTML = '<span class="hint">Aún no has agregado a nadie.</span>'; return; }
+    ids.forEach(function (id) {
+      var r = seleccion[id];
+      var chip = document.createElement('span'); chip.className = 'chip';
+      var t = document.createElement('span'); t.textContent = r.nombre;
+      var x = document.createElement('button'); x.type = 'button'; x.textContent = '×'; x.title = 'Quitar';
+      x.onclick = function () { delete seleccion[id]; pintarResultados(); pintarChips(); actualizarConteo(); };
+      chip.appendChild(t); chip.appendChild(x); cont.appendChild(chip);
+    });
+  }
+  $('buscador').addEventListener('input', pintarResultados);
+  $('btnLimpiar').onclick = function () { seleccion = {}; pintarResultados(); pintarChips(); actualizarConteo(); };
+
+  var EMAIL_OK = /^[A-Za-z0-9._%+\-]+@[A-Za-z0-9\-]+(\.[A-Za-z0-9\-]+)+$/;
+  function procesarLista() {
+    var lineas = $('textoLista').value.split(/\r?\n/);
+    var buenos = [], malos = [], vistos = {}, repetidos = 0;
+    lineas.forEach(function (ln) {
+      ln = ln.trim(); if (!ln || ln.indexOf('@') === -1) return;
+      var m = ln.match(/[^\s,;\t<>"']+@[^\s,;\t<>"']+/);
+      if (!m) return;
+      var correo = m[0].replace(/[.,;]+$/, '').toLowerCase();
+      var nombre = ln.replace(m[0], '').replace(/[,;\t"]+/g, ' ').replace(/\s+/g, ' ').trim() || 'amigo/a';
+      if (!EMAIL_OK.test(correo)) { malos.push(nombre + ' → ' + correo); return; }
+      if (vistos[correo]) { repetidos++; return; }
+      vistos[correo] = true; buenos.push({ nombre: nombre, correo: correo });
+    });
+    listaCargada = buenos;
+    var t = buenos.length + ' correos válidos listos para enviar.';
+    if (repetidos) t += ' ' + repetidos + ' repetido(s) omitido(s).';
+    if (malos.length) t += ' ⚠️ ' + malos.length + ' con correo mal escrito (no se enviarán): ' + malos.join(' | ');
+    setMsg('resumenLista', t, malos.length ? 'err' : 'good');
+    actualizarConteo();
+  }
+  $('btnProcesar').onclick = procesarLista;
+  $('archivoLista').onchange = function () {
+    var f = this.files && this.files[0]; if (!f) return;
+    var rd = new FileReader();
+    rd.onload = function () { $('textoLista').value = String(rd.result || ''); procesarLista(); };
+    rd.readAsText(f, 'utf-8');
+  };
+
   function destinatarios() {
     var d = $('destino').value;
-    if (d === 'prueba') return registros.filter(function (r) { return String(r.id) === $('selPersona').value; });
+    if (d === 'lista') return listaCargada.slice();
+    if (d === 'buscar') return Object.keys(seleccion).map(function (id) { return seleccion[id]; });
     if (d === 'pagados') return registros.filter(function (r) { return r.pagado; });
     if (d === 'nopagados') return registros.filter(function (r) { return !r.pagado; });
     return registros.slice();
   }
   function actualizarConteo() {
-    $('bloquePrueba').style.display = $('destino').value === 'prueba' ? 'block' : 'none';
+    $('bloqueBuscar').style.display = $('destino').value === 'buscar' ? 'block' : 'none';
+    $('bloqueLista').style.display = $('destino').value === 'lista' ? 'block' : 'none';
     var n = destinatarios().length;
     $('conteo').textContent = 'Se enviará a ' + n + (n === 1 ? ' persona.' : ' personas.');
   }
   $('destino').onchange = actualizarConteo;
-  $('selPersona').onchange = actualizarConteo;
 
   // ── Envío ──
   $('btnEnviar').onclick = function () {
@@ -263,16 +356,22 @@
     var d = datosEditor();
     if (!dest.length) return setMsg('msgEnvio', 'No hay destinatarios en esa selección', 'err');
     if (!d.asunto || !d.mensaje.trim()) return setMsg('msgEnvio', 'Falta el asunto o el mensaje', 'err');
-    var etiqueta = { pagados: 'los que YA PAGARON', nopagados: 'los que NO HAN PAGADO', todos: 'TODOS los registrados', prueba: 'una persona (prueba)' }[$('destino').value];
-    if (actual && $('destino').value !== 'prueba' && $('destino').value !== actual.audiencia) {
+    var etiqueta = { pagados: 'los que YA PAGARON', nopagados: 'los que NO HAN PAGADO', todos: 'TODOS los registrados', buscar: 'las personas que seleccionaste', lista: 'las personas de la lista cargada' }[$('destino').value];
+    if (actual && $('destino').value === 'buscar' && actual.audiencia !== 'todos') {
+      var fuera = dest.filter(function (r) { return actual.audiencia === 'pagados' ? !r.pagado : r.pagado; });
+      if (fuera.length && !confirm('⚠️ Esta plantilla es para ' + (actual.audiencia === 'pagados' ? 'quienes YA PAGARON' : 'quienes NO HAN PAGADO') + ', pero hay ' + fuera.length + ' persona(s) de otro grupo en tu selección:\n\n' + fuera.map(function (r) { return '• ' + r.nombre; }).join('\n') + '\n\n¿Seguro que quieres continuar?')) return;
+    } else if (actual && $('destino').value !== 'buscar' && $('destino').value !== 'lista' && $('destino').value !== actual.audiencia) {
       if (!confirm('⚠️ Esta plantilla está pensada para otro grupo.\n\nPlantilla: ' + actual.nombre + '\nEnviarás a: ' + etiqueta + '\n\n¿Seguro que quieres continuar?')) return;
     }
     if (!confirm('Vas a enviar "' + d.asunto + '" a ' + dest.length + ' persona(s): ' + etiqueta + '.\n\n¿Enviar ahora?')) return;
 
     $('btnEnviar').disabled = true; setMsg('msgEnvio', 'Iniciando envío…');
-    api('/api/admin/enviar-mensaje', {
+    var esLista = $('destino').value === 'lista';
+    api(esLista ? '/api/admin/enviar-lista' : '/api/admin/enviar-mensaje', {
       method: 'POST',
-      body: JSON.stringify({ asunto: d.asunto, mensaje: d.mensaje, ids: dest.map(function (r) { return r.id; }), modoHtml: true })
+      body: JSON.stringify(esLista
+        ? { asunto: d.asunto, mensaje: d.mensaje, destinatarios: dest, modoHtml: true }
+        : { asunto: d.asunto, mensaje: d.mensaje, ids: dest.map(function (r) { return r.id; }), modoHtml: true })
     }).then(function (r) {
       setMsg('msgEnvio', r.mensaje || 'Envío iniciado');
       seguirProgreso();
@@ -286,7 +385,7 @@
         $('barra').style.width = pct + '%';
         if (s.running) { setMsg('msgEnvio', 'Enviando… ' + (s.enviados + s.fallidos) + ' de ' + s.total); return; }
         clearInterval(timer); $('btnEnviar').disabled = false;
-        if (s.fallidos > 0) setMsg('msgEnvio', 'Terminó: ' + s.enviados + ' enviados y ' + s.fallidos + ' con error', 'err');
+        if (s.fallidos > 0) setMsg('msgEnvio', 'Terminó: ' + s.enviados + ' enviados y ' + s.fallidos + ' con error. Motivo: ' + (s.ultimo_error || 'desconocido'), 'err');
         else setMsg('msgEnvio', 'Listo ✅ ' + s.enviados + ' mensajes enviados', 'good');
       }).catch(function () {});
     }, 1500);

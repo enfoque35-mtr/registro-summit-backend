@@ -451,6 +451,7 @@ let broadcastJob = {
   fallidos: 0,
   iniciado_en: null,
   terminado_en: null,
+  ultimo_error: null,
 };
 
 // ── Imágenes para los mensajes masivos (guardadas en memoria) ─────
@@ -545,6 +546,7 @@ app.post('/api/admin/enviar-mensaje', requireAdmin, async (req, res) => {
     fallidos: 0,
     iniciado_en: new Date().toISOString(),
     terminado_en: null,
+    ultimo_error: null,
   };
 
   res.status(200).json({ ok: true, mensaje: `Envío iniciado a ${rows.length} personas` });
@@ -562,11 +564,14 @@ app.post('/api/admin/enviar-mensaje', requireAdmin, async (req, res) => {
       }));
 
       try {
-        await resend.batch.send(correos);
+        // El SDK de Resend NO lanza excepción cuando falla: devuelve { data, error }
+        const { error } = await resend.batch.send(correos);
+        if (error) throw new Error(`${error.name || 'error'}: ${error.message || JSON.stringify(error)}`);
         broadcastJob.enviados += lote.length;
       } catch (e) {
         console.error('Error enviando lote:', e);
         broadcastJob.fallidos += lote.length;
+        broadcastJob.ultimo_error = String(e.message || e);
       }
     }
     broadcastJob.running = false;
@@ -620,6 +625,85 @@ app.post('/api/admin/plantillas', requireAdmin, async (req, res) => {
 app.delete('/api/admin/plantillas/:id', requireAdmin, async (req, res) => {
   const r = await pool.query(`DELETE FROM plantillas WHERE id = $1`, [Number(req.params.id)]);
   res.json({ ok: true, eliminadas: r.rowCount });
+});
+
+// ── Enviar a una lista cargada (nombre + correo), sin depender de la tabla ──
+// Valida cada correo, descarta los malos y, si Resend rechaza un lote,
+// reintenta uno por uno para que un solo correo malo no frene a los demás.
+app.post('/api/admin/enviar-lista', requireAdmin, async (req, res) => {
+  const { asunto, mensaje, destinatarios, modoHtml } = req.body || {};
+  if (!asunto || !mensaje) {
+    return res.status(400).json({ ok: false, error: 'Falta el asunto o el mensaje' });
+  }
+  if (!Array.isArray(destinatarios) || destinatarios.length === 0) {
+    return res.status(400).json({ ok: false, error: 'La lista está vacía' });
+  }
+  if (broadcastJob.running) {
+    return res.status(409).json({ ok: false, error: 'Ya hay un envío en curso, espera a que termine' });
+  }
+
+  const correoValido = /^[A-Za-z0-9._%+\-]+@[A-Za-z0-9\-]+(\.[A-Za-z0-9\-]+)+$/;
+  const vistos = new Set();
+  const lista = [];
+  const descartados = [];
+  for (const d of destinatarios) {
+    const correo = String((d && d.correo) || '').trim().toLowerCase();
+    const nombre = String((d && d.nombre) || '').trim() || 'amigo/a';
+    if (!correoValido.test(correo)) { descartados.push({ nombre, correo, motivo: 'Correo inválido' }); continue; }
+    if (vistos.has(correo)) { descartados.push({ nombre, correo, motivo: 'Repetido' }); continue; }
+    vistos.add(correo);
+    lista.push({ nombre, correo });
+  }
+  if (lista.length === 0) {
+    return res.status(400).json({ ok: false, error: 'Ningún correo de la lista es válido', descartados });
+  }
+
+  broadcastJob = {
+    running: true,
+    total: lista.length,
+    enviados: 0,
+    fallidos: 0,
+    iniciado_en: new Date().toISOString(),
+    terminado_en: null,
+    ultimo_error: null,
+  };
+  res.status(200).json({ ok: true, mensaje: `Envío iniciado a ${lista.length} personas`, descartados });
+
+  (async () => {
+    const TAMANO_LOTE = 90;
+    const armar = (r) => ({
+      from: `${EVENT_NAME} <${FROM_EMAIL}>`,
+      to: r.correo,
+      subject: personalizar(asunto, r.nombre),
+      html: construirHtmlMensaje(personalizarCuerpo(mensaje, r.nombre, ''), null, modoHtml === true),
+    });
+    for (let i = 0; i < lista.length; i += TAMANO_LOTE) {
+      const lote = lista.slice(i, i + TAMANO_LOTE);
+      try {
+        const { error } = await resend.batch.send(lote.map(armar));
+        if (error) throw new Error(`${error.name || 'error'}: ${error.message || JSON.stringify(error)}`);
+        broadcastJob.enviados += lote.length;
+      } catch (e) {
+        console.error('Lote rechazado, se reintenta uno por uno:', e);
+        for (const r of lote) {
+          try {
+            const { error } = await resend.emails.send(armar(r));
+            if (error) throw new Error(`${error.name || 'error'}: ${error.message || JSON.stringify(error)}`);
+            broadcastJob.enviados += 1;
+          } catch (e2) {
+            broadcastJob.fallidos += 1;
+            broadcastJob.ultimo_error = `${r.correo}: ${String(e2.message || e2)}`;
+          }
+        }
+      }
+    }
+    broadcastJob.running = false;
+    broadcastJob.terminado_en = new Date().toISOString();
+  })().catch((e) => {
+    console.error('Error inesperado en envío de lista:', e);
+    broadcastJob.running = false;
+    broadcastJob.ultimo_error = String(e.message || e);
+  });
 });
 
 const PORT = process.env.PORT || 3000;
