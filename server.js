@@ -28,7 +28,7 @@ const { Pool } = require('pg');
 const { Resend } = require('resend');
 const crypto = require('crypto');
 const ExcelJS = require('exceljs');
-const path = require('path');
+const { generarCertificado } = require('./certificado');
 
 const app = express();
 app.use(cors());
@@ -40,123 +40,14 @@ const EVENT_NAME = 'I Summit Comunicación Política';
 const EVENT_DATE = 'Viernes 23 de octubre de 2026 · Montería';
 const PUBLIC_BASE_URL = process.env.PUBLIC_BASE_URL || 'https://registro-summit-backend-production.up.railway.app';
 const ADMIN_KEY = process.env.ADMIN_KEY || 'cambia-esta-clave';
+// Página pública de la evaluación (el archivo evaluacion-summit.html subido al hosting)
+const EVALUACION_URL = process.env.EVALUACION_URL || 'https://enfoque35.co/evaluacion-summit.html';
 
 // ── Base de datos (Postgres) ─────────────────────────────────────
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
   ssl: process.env.DATABASE_URL?.includes('railway') ? { rejectUnauthorized: false } : false,
 });
-
-
-// ── Plantillas de mensajes (guardadas en la base de datos) ───────
-const QR_URL = `${PUBLIC_BASE_URL}/api/qr/{{token}}`;
-
-const PLANTILLAS_INICIALES = [
-  {
-    nombre: '1. Último llamado de pago (no pagados)',
-    audiencia: 'nopagados',
-    asunto: '⏰ Últimas horas para tu cupo en el I Summit de Comunicación Política',
-    mensaje: `<div style="background-color:#d62828;padding:10px;text-align:center;font-size:15px;font-weight:bold;color:#ffffff;border-radius:4px;">
-  🚨 ¡ARRANCA MAÑANA! 🚨
-</div>
-
-<p>Hola <strong>{{nombre}}</strong> 👋,</p>
-
-<p>⏰ El <strong>I SUMMIT DE COMUNICACIÓN POLÍTICA</strong> arranca <strong>mañana</strong> y estamos <strong>cerrando la lista de asistentes</strong>.</p>
-
-<p>Tu nombre sigue en nuestro radar y no queremos que te quedes por fuera. Si todavía no has pagado, 🔥 <strong>hoy es el último día para asegurar tu cupo</strong>.</p>
-
-<div style="background-color:#f0f5fb;border-left:4px solid #1f3a5f;padding:14px 18px;margin:20px 0;border-radius:4px;">
-  <p style="margin:0 0 8px 0;">💳 <strong>Datos para tu pago</strong></p>
-  <strong>Bancolombia, cuenta de ahorros</strong><br>
-  <strong>Número: 56922771541</strong><br>
-  <strong>Titular: Katia Milena Polo Herrera</strong><br>
-  <strong>C.C. 1067843531</strong>
-</div>
-
-<p>📲 Cuando lo hagas, <strong>envía el comprobante al WhatsApp +57 310 7089040</strong> y te confirmamos tu entrada de inmediato. Si tienes cualquier duda, <strong>escríbenos a ese mismo número</strong>.</p>
-
-<p>Será una jornada de <strong>ideas, estrategia y contactos de primer nivel</strong> con quienes hacen <strong>comunicación política</strong> en serio. ⚠️ <strong>Esas conversaciones no se repiten</strong>, y queremos que estés en ellas.</p>
-
-<p>✅ Si ya realizaste tu pago, gracias, <strong>nos vemos mañana</strong>.</p>
-
-<p><strong>¡Te esperamos!</strong> 🙌<br>
-Equipo I Summit de Comunicación Política</p>`,
-  },
-  {
-    nombre: '2. Recordatorio: mañana es el día (pagados, con QR)',
-    audiencia: 'pagados',
-    asunto: '🎉 ¡Mañana es el día! Tu cupo en el I Summit de Comunicación Política está confirmado',
-    mensaje: `<div style="background-color:#1e7b4a;padding:10px;text-align:center;font-size:15px;font-weight:bold;color:#ffffff;border-radius:4px;">
-  🎉 ¡MAÑANA ES EL DÍA! 🎉
-</div>
-
-<p>Hola <strong>{{nombre}}</strong> 👋,</p>
-
-<p>✅ <strong>Tu pago está confirmado</strong> y tu cupo en el <strong>I SUMMIT DE COMUNICACIÓN POLÍTICA</strong> está asegurado. ¡Gracias por hacer parte!</p>
-
-<p>⏰ Te recordamos que el evento es <strong>mañana</strong>. Estos son los datos para que no te falte nada:</p>
-
-<div style="background-color:#eaf5ee;border-left:4px solid #1e7b4a;padding:14px 18px;margin:20px 0;border-radius:4px;">
-  📅 <strong>Fecha:</strong> Mañana, viernes 23 de octubre<br>
-  🕐 <strong>Hora:</strong> 8:00 a. m.<br>
-  📍 <strong>Lugar:</strong> Auditorio Cultural de la Universidad de Córdoba, Montería
-</div>
-
-<div style="text-align:center;border:2px dashed #1e7b4a;border-radius:8px;padding:20px;margin:24px 0;">
-  <p style="margin:0 0 12px 0;">🎟️ <strong>Tu código QR de ingreso</strong></p>
-  <img src="${QR_URL}" width="220" height="220" alt="Código QR de ingreso" style="width:220px;height:220px;display:block;margin:0 auto;">
-  <p style="margin:12px 0 0 0;font-size:14px;color:#444;"><strong>Preséntalo en la entrada</strong> desde tu celular o impreso. Es personal e intransferible.</p>
-</div>
-
-<p>Te recomendamos <strong>llegar con tiempo</strong> para el registro y para que no te pierdas nada del arranque.</p>
-
-<p>Será una jornada de <strong>ideas, estrategia y contactos de primer nivel</strong> con quienes hacen <strong>comunicación política</strong> en serio. 🚀</p>
-
-<p>📲 Si tienes cualquier duda, <strong>escríbenos al WhatsApp +57 310 7089040</strong>.</p>
-
-<p><strong>¡Te esperamos mañana!</strong> 🙌<br>
-Equipo I Summit de Comunicación Política</p>`,
-  },
-  {
-    nombre: '3. Llegó el gran día (pagados, con QR)',
-    audiencia: 'pagados',
-    asunto: '🎉 ¡Llegó el gran día! Hoy es el I Summit de Comunicación Política',
-    mensaje: `<div style="background-color:#1e7b4a;padding:12px;text-align:center;font-size:16px;font-weight:bold;color:#ffffff;border-radius:4px;">
-  🎉 ¡LLEGÓ EL GRAN DÍA! 🎉
-</div>
-
-<p>Buenos días, <strong>{{nombre}}</strong> ☀️,</p>
-
-<p>¡Hoy es el día! 🙌 El <strong>I SUMMIT DE COMUNICACIÓN POLÍTICA</strong> comienza en pocos minutos y tu lugar ya está reservado. Gracias por ser parte de este primer encuentro.</p>
-
-<div style="background-color:#eaf5ee;border-left:4px solid #1e7b4a;padding:14px 18px;margin:20px 0;border-radius:4px;">
-  📅 <strong>Fecha:</strong> Hoy, viernes 23 de octubre<br>
-  🕐 <strong>Hora:</strong> 8:00 a. m.<br>
-  📍 <strong>Lugar:</strong> Auditorio Cultural de la Universidad de Córdoba, Montería
-</div>
-
-<div style="text-align:center;border:2px dashed #1e7b4a;border-radius:8px;padding:20px;margin:24px 0;">
-  <p style="margin:0 0 12px 0;">🎟️ <strong>Tu código QR de ingreso</strong></p>
-  <img src="${QR_URL}" width="220" height="220" alt="Código QR de ingreso" style="width:220px;height:220px;display:block;margin:0 auto;">
-  <p style="margin:12px 0 0 0;font-size:14px;color:#444;"><strong>Tenlo listo en tu celular</strong> para mostrarlo en la entrada. Es personal e intransferible.</p>
-</div>
-
-<p><strong>Al llegar:</strong></p>
-<p>
-✅ Ten tu QR a la mano (sube el brillo de la pantalla)<br>
-✅ Lleva tu documento de identidad<br>
-✅ Pasa primero por el registro 🚶‍♂️
-</p>
-
-<p>Será una jornada de <strong>ideas, estrategia y contactos de primer nivel</strong> con quienes hacen <strong>comunicación política</strong> en serio. 🚀</p>
-
-<p>📲 ¿Alguna duda de último momento? <strong>Escríbenos al WhatsApp +57 310 7089040</strong>.</p>
-
-<p><strong>¡Nos vemos muy pronto!</strong> 🙌<br>
-Equipo I Summit de Comunicación Política</p>`,
-  },
-];
 
 async function initDb() {
   await pool.query(`
@@ -185,27 +76,19 @@ async function initDb() {
   await pool.query(`ALTER TABLE registros ADD COLUMN IF NOT EXISTS pagado BOOLEAN DEFAULT FALSE`);
   await pool.query(`ALTER TABLE registros ADD COLUMN IF NOT EXISTS pagado_at TIMESTAMP`);
 
-  // Plantillas de mensajes
+  // Evaluación del evento: una respuesta por persona (por token)
   await pool.query(`
-    CREATE TABLE IF NOT EXISTS plantillas (
-      id          SERIAL PRIMARY KEY,
-      nombre      TEXT UNIQUE NOT NULL,
-      audiencia   TEXT NOT NULL DEFAULT 'todos',
-      asunto      TEXT NOT NULL,
-      mensaje     TEXT NOT NULL,
-      updated_at  TIMESTAMP DEFAULT NOW()
+    CREATE TABLE IF NOT EXISTS evaluaciones (
+      token         TEXT PRIMARY KEY,
+      relevancia    TEXT NOT NULL,
+      ponentes      TEXT NOT NULL,
+      asistiria     TEXT NOT NULL,
+      tema          TEXT NOT NULL,
+      herramientas  TEXT NOT NULL,
+      calificacion  INTEGER NOT NULL,
+      created_at    TIMESTAMP DEFAULT NOW()
     )
   `);
-  // Solo se cargan las plantillas iniciales si la tabla está vacía
-  const { rows: cnt } = await pool.query(`SELECT COUNT(*)::int AS n FROM plantillas`);
-  if (cnt[0].n === 0) {
-    for (const t of PLANTILLAS_INICIALES) {
-      await pool.query(
-        `INSERT INTO plantillas (nombre, audiencia, asunto, mensaje) VALUES ($1, $2, $3, $4)`,
-        [t.nombre, t.audiencia, t.asunto, t.mensaje]
-      );
-    }
-  }
 }
 
 // ── Validación mínima ────────────────────────────────────────────
@@ -354,10 +237,15 @@ app.get('/api/resumen', async (req, res) => {
 // ── Exportar todos los registros como archivo Excel (.xlsx) ──────
 async function exportarExcel(req, res) {
   const { rows } = await pool.query(`
-    SELECT token, nombre, correo, ocupacion, ciudad, telefono, comentarios,
-           CASE WHEN pagado THEN 'SI' ELSE 'NO' END AS pagado, pagado_at,
-           correo_enviado, check_in, check_in_at, created_at
-    FROM registros ORDER BY created_at
+    SELECT r.token, r.nombre, r.correo, r.ocupacion, r.ciudad, r.telefono, r.comentarios,
+           CASE WHEN r.pagado THEN 'SI' ELSE 'NO' END AS pagado, r.pagado_at,
+           r.correo_enviado, r.check_in, r.check_in_at, r.created_at,
+           CASE WHEN e.token IS NULL THEN 'NO' ELSE 'SI' END AS evaluo,
+           e.relevancia, e.ponentes, e.asistiria, e.tema, e.herramientas, e.calificacion,
+           e.created_at AS evaluacion_at
+    FROM registros r
+    LEFT JOIN evaluaciones e ON e.token = r.token
+    ORDER BY r.created_at
   `);
 
   const workbook = new ExcelJS.Workbook();
@@ -377,6 +265,14 @@ async function exportarExcel(req, res) {
     { header: 'check_in', key: 'check_in', width: 12 },
     { header: 'check_in_at', key: 'check_in_at', width: 22 },
     { header: 'created_at', key: 'created_at', width: 22 },
+    { header: 'evaluo', key: 'evaluo', width: 10 },
+    { header: 'relevancia_temas', key: 'relevancia', width: 24 },
+    { header: 'nivel_ponentes', key: 'ponentes', width: 16 },
+    { header: 'asistiria_marzo', key: 'asistiria', width: 20 },
+    { header: 'tema_sugerido', key: 'tema', width: 36 },
+    { header: 'herramientas', key: 'herramientas', width: 16 },
+    { header: 'calificacion_summit', key: 'calificacion', width: 20 },
+    { header: 'evaluacion_at', key: 'evaluacion_at', width: 22 },
   ];
   sheet.getRow(1).font = { bold: true };
 
@@ -417,10 +313,11 @@ function personalizar(texto, nombre) {
 function escaparHtml(s) {
   return String(s || '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }
+// {{enlace}} = enlace personal a la evaluación (con el token de cada registrado)
 function personalizarCuerpo(texto, nombre, token) {
   return (texto || '')
     .replaceAll('{{nombre}}', escaparHtml(nombre))
-    .replaceAll('{{token}}', token || '');
+    .replaceAll('{{enlace}}', `${EVALUACION_URL}?t=${encodeURIComponent(token || '')}`);
 }
 
 function construirHtmlMensaje(cuerpoPersonalizado, imagenUrl, modoHtml = false) {
@@ -451,7 +348,6 @@ let broadcastJob = {
   fallidos: 0,
   iniciado_en: null,
   terminado_en: null,
-  ultimo_error: null,
 };
 
 // ── Imágenes para los mensajes masivos (guardadas en memoria) ─────
@@ -546,7 +442,6 @@ app.post('/api/admin/enviar-mensaje', requireAdmin, async (req, res) => {
     fallidos: 0,
     iniciado_en: new Date().toISOString(),
     terminado_en: null,
-    ultimo_error: null,
   };
 
   res.status(200).json({ ok: true, mensaje: `Envío iniciado a ${rows.length} personas` });
@@ -564,14 +459,11 @@ app.post('/api/admin/enviar-mensaje', requireAdmin, async (req, res) => {
       }));
 
       try {
-        // El SDK de Resend NO lanza excepción cuando falla: devuelve { data, error }
-        const { error } = await resend.batch.send(correos);
-        if (error) throw new Error(`${error.name || 'error'}: ${error.message || JSON.stringify(error)}`);
+        await resend.batch.send(correos);
         broadcastJob.enviados += lote.length;
       } catch (e) {
         console.error('Error enviando lote:', e);
         broadcastJob.fallidos += lote.length;
-        broadcastJob.ultimo_error = String(e.message || e);
       }
     }
     broadcastJob.running = false;
@@ -579,131 +471,76 @@ app.post('/api/admin/enviar-mensaje', requireAdmin, async (req, res) => {
   })();
 });
 
-// ── Página de plantillas (se entra con la clave de administrador) ──
-app.get('/plantillas', (req, res) => {
-  res.sendFile(path.join(__dirname, 'plantillas.html'));
-});
+// ── Evaluación del evento (pública, protegida por el token de cada persona) ──
+const OPCIONES = {
+  relevancia: ['Nada relevantes', 'Poco relevantes', 'Medianamente relevantes', 'Muy relevantes', 'Totalmente relevantes'],
+  ponentes: ['Deficiente', 'Regular', 'Bueno', 'Muy bueno', 'Excelente'],
+  asistiria: ['Sí, definitivamente', 'Probablemente sí', 'No estoy seguro', 'Probablemente no', 'No'],
+  herramientas: ['Ninguna', 'Pocas', 'Algunas', 'Varias', 'Muchas'],
+};
+const TEMAS = [
+  'Campañas electorales y estrategia política',
+  'Marketing político digital y redes sociales',
+  'Comunicación de gobierno y gestión pública',
+  'Manejo de crisis y reputación',
+  'Oratoria y vocería',
+  'Inteligencia artificial y datos en la política',
+];
 
-app.get('/api/admin/plantillas', requireAdmin, async (req, res) => {
+// ¿Quién es y ya evaluó? (la página lo usa al abrirse)
+app.get('/api/evaluacion/:token', async (req, res) => {
   const { rows } = await pool.query(
-    `SELECT id, nombre, audiencia, asunto, mensaje, updated_at FROM plantillas ORDER BY id`
+    `SELECT r.nombre, (e.token IS NOT NULL) AS respondio
+     FROM registros r LEFT JOIN evaluaciones e ON e.token = r.token
+     WHERE r.token = $1`,
+    [req.params.token]
   );
-  res.json(rows);
+  if (rows.length === 0) return res.status(404).json({ ok: false, error: 'Enlace no válido' });
+  res.json({ ok: true, nombre: rows[0].nombre, respondio: rows[0].respondio });
 });
 
-// Crea una plantilla nueva (sin id) o actualiza una existente (con id)
-app.post('/api/admin/plantillas', requireAdmin, async (req, res) => {
-  const { id, nombre, audiencia, asunto, mensaje } = req.body || {};
-  const audiencias = ['todos', 'pagados', 'nopagados'];
-  if (!nombre || !asunto || !mensaje || !audiencias.includes(audiencia)) {
-    return res.status(400).json({ ok: false, error: 'Faltan datos de la plantilla' });
+app.post('/api/evaluacion/:token', async (req, res) => {
+  const { rows } = await pool.query(`SELECT 1 FROM registros WHERE token = $1`, [req.params.token]);
+  if (rows.length === 0) return res.status(404).json({ ok: false, error: 'Enlace no válido' });
+
+  const b = req.body || {};
+  const tema = String(b.tema || '').trim();
+  const temaOk = TEMAS.includes(tema) || (tema.startsWith('Otro: ') && tema.length > 6 && tema.length <= 160);
+  const cal = Number(b.calificacion);
+  const valido =
+    Object.keys(OPCIONES).every((k) => OPCIONES[k].includes(b[k])) &&
+    temaOk && Number.isInteger(cal) && cal >= 1 && cal <= 5;
+  if (!valido) return res.status(400).json({ ok: false, error: 'Respuestas incompletas o no válidas' });
+
+  // Si ya había respondido, se conserva la primera respuesta
+  await pool.query(
+    `INSERT INTO evaluaciones (token, relevancia, ponentes, asistiria, tema, herramientas, calificacion)
+     VALUES ($1,$2,$3,$4,$5,$6,$7) ON CONFLICT (token) DO NOTHING`,
+    [req.params.token, b.relevancia, b.ponentes, b.asistiria, tema, b.herramientas, cal]
+  );
+  res.json({ ok: true });
+});
+
+// Certificado en PDF: solo si la persona ya respondió la evaluación
+app.get('/api/certificado/:token', async (req, res) => {
+  const { rows } = await pool.query(
+    `SELECT r.nombre FROM registros r
+     JOIN evaluaciones e ON e.token = r.token
+     WHERE r.token = $1`,
+    [req.params.token]
+  );
+  if (rows.length === 0) {
+    return res.status(403).send('Primero debes responder la evaluación del evento para descargar tu certificado.');
   }
   try {
-    if (id) {
-      const r = await pool.query(
-        `UPDATE plantillas SET nombre=$1, audiencia=$2, asunto=$3, mensaje=$4, updated_at=NOW()
-         WHERE id=$5 RETURNING id`,
-        [nombre.trim(), audiencia, asunto, mensaje, Number(id)]
-      );
-      if (r.rowCount === 0) return res.status(404).json({ ok: false, error: 'Plantilla no encontrada' });
-      return res.json({ ok: true, id: r.rows[0].id });
-    }
-    const r = await pool.query(
-      `INSERT INTO plantillas (nombre, audiencia, asunto, mensaje) VALUES ($1,$2,$3,$4) RETURNING id`,
-      [nombre.trim(), audiencia, asunto, mensaje]
-    );
-    res.json({ ok: true, id: r.rows[0].id });
+    const pdf = await generarCertificado(rows[0].nombre);
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', 'attachment; filename="certificado-i-summit.pdf"');
+    res.send(pdf);
   } catch (e) {
-    if (e.code === '23505') {
-      return res.status(409).json({ ok: false, error: 'Ya existe una plantilla con ese nombre' });
-    }
-    console.error(e);
-    res.status(500).json({ ok: false, error: 'No se pudo guardar la plantilla' });
+    console.error('Error generando certificado:', e);
+    res.status(500).send('No se pudo generar el certificado. Intenta de nuevo.');
   }
-});
-
-app.delete('/api/admin/plantillas/:id', requireAdmin, async (req, res) => {
-  const r = await pool.query(`DELETE FROM plantillas WHERE id = $1`, [Number(req.params.id)]);
-  res.json({ ok: true, eliminadas: r.rowCount });
-});
-
-// ── Enviar a una lista cargada (nombre + correo), sin depender de la tabla ──
-// Valida cada correo, descarta los malos y, si Resend rechaza un lote,
-// reintenta uno por uno para que un solo correo malo no frene a los demás.
-app.post('/api/admin/enviar-lista', requireAdmin, async (req, res) => {
-  const { asunto, mensaje, destinatarios, modoHtml } = req.body || {};
-  if (!asunto || !mensaje) {
-    return res.status(400).json({ ok: false, error: 'Falta el asunto o el mensaje' });
-  }
-  if (!Array.isArray(destinatarios) || destinatarios.length === 0) {
-    return res.status(400).json({ ok: false, error: 'La lista está vacía' });
-  }
-  if (broadcastJob.running) {
-    return res.status(409).json({ ok: false, error: 'Ya hay un envío en curso, espera a que termine' });
-  }
-
-  const correoValido = /^[A-Za-z0-9._%+\-]+@[A-Za-z0-9\-]+(\.[A-Za-z0-9\-]+)+$/;
-  const vistos = new Set();
-  const lista = [];
-  const descartados = [];
-  for (const d of destinatarios) {
-    const correo = String((d && d.correo) || '').trim().toLowerCase();
-    const nombre = String((d && d.nombre) || '').trim() || 'amigo/a';
-    if (!correoValido.test(correo)) { descartados.push({ nombre, correo, motivo: 'Correo inválido' }); continue; }
-    if (vistos.has(correo)) { descartados.push({ nombre, correo, motivo: 'Repetido' }); continue; }
-    vistos.add(correo);
-    lista.push({ nombre, correo });
-  }
-  if (lista.length === 0) {
-    return res.status(400).json({ ok: false, error: 'Ningún correo de la lista es válido', descartados });
-  }
-
-  broadcastJob = {
-    running: true,
-    total: lista.length,
-    enviados: 0,
-    fallidos: 0,
-    iniciado_en: new Date().toISOString(),
-    terminado_en: null,
-    ultimo_error: null,
-  };
-  res.status(200).json({ ok: true, mensaje: `Envío iniciado a ${lista.length} personas`, descartados });
-
-  (async () => {
-    const TAMANO_LOTE = 90;
-    const armar = (r) => ({
-      from: `${EVENT_NAME} <${FROM_EMAIL}>`,
-      to: r.correo,
-      subject: personalizar(asunto, r.nombre),
-      html: construirHtmlMensaje(personalizarCuerpo(mensaje, r.nombre, ''), null, modoHtml === true),
-    });
-    for (let i = 0; i < lista.length; i += TAMANO_LOTE) {
-      const lote = lista.slice(i, i + TAMANO_LOTE);
-      try {
-        const { error } = await resend.batch.send(lote.map(armar));
-        if (error) throw new Error(`${error.name || 'error'}: ${error.message || JSON.stringify(error)}`);
-        broadcastJob.enviados += lote.length;
-      } catch (e) {
-        console.error('Lote rechazado, se reintenta uno por uno:', e);
-        for (const r of lote) {
-          try {
-            const { error } = await resend.emails.send(armar(r));
-            if (error) throw new Error(`${error.name || 'error'}: ${error.message || JSON.stringify(error)}`);
-            broadcastJob.enviados += 1;
-          } catch (e2) {
-            broadcastJob.fallidos += 1;
-            broadcastJob.ultimo_error = `${r.correo}: ${String(e2.message || e2)}`;
-          }
-        }
-      }
-    }
-    broadcastJob.running = false;
-    broadcastJob.terminado_en = new Date().toISOString();
-  })().catch((e) => {
-    console.error('Error inesperado en envío de lista:', e);
-    broadcastJob.running = false;
-    broadcastJob.ultimo_error = String(e.message || e);
-  });
 });
 
 const PORT = process.env.PORT || 3000;
