@@ -41,7 +41,7 @@ const EVENT_DATE = 'Viernes 23 de octubre de 2026 · Montería';
 const PUBLIC_BASE_URL = process.env.PUBLIC_BASE_URL || 'https://registro-summit-backend-production.up.railway.app';
 const ADMIN_KEY = process.env.ADMIN_KEY || 'cambia-esta-clave';
 // Página pública de la evaluación (el archivo evaluacion-summit.html subido al hosting)
-const EVALUACION_URL = process.env.EVALUACION_URL || 'https://enfoque35.co/evaluacion-summit.html';
+const EVALUACION_URL = process.env.EVALUACION_URL || 'https://www.enfoque35.co/evaluacion-summit/';
 
 // ── Base de datos (Postgres) ─────────────────────────────────────
 const pool = new Pool({
