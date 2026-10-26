@@ -346,6 +346,7 @@ let broadcastJob = {
   total: 0,
   enviados: 0,
   fallidos: 0,
+  errores: [],
   iniciado_en: null,
   terminado_en: null,
 };
@@ -462,6 +463,7 @@ app.post('/api/admin/enviar-mensaje', requireAdmin, async (req, res) => {
     total: rows.length,
     enviados: 0,
     fallidos: 0,
+    errores: [],
     iniciado_en: new Date().toISOString(),
     terminado_en: null,
   };
@@ -480,12 +482,36 @@ app.post('/api/admin/enviar-mensaje', requireAdmin, async (req, res) => {
         html: construirHtmlMensaje(personalizarCuerpo(mensaje, r.nombre, r.token), imagenUrl, modoHtml === true),
       }));
 
+      // Correos con formato inválido se descartan y se reportan (un solo correo malo hacía fallar todo el lote)
+      const validos = [];
+      correos.forEach((c) => {
+        if (/^[^\s@,;]+@[^\s@,;]+\.[^\s@,;]+$/.test(String(c.to).trim())) validos.push(c);
+        else { broadcastJob.fallidos += 1; broadcastJob.errores.push(`${c.to} (correo con formato inválido)`); }
+      });
+      if (validos.length === 0) continue;
+
+      let loteOk = false;
       try {
-        await resend.batch.send(correos);
-        broadcastJob.enviados += lote.length;
+        const { error } = await resend.batch.send(validos);
+        if (error) throw new Error(error.message || 'Error de Resend');
+        broadcastJob.enviados += validos.length;
+        loteOk = true;
       } catch (e) {
-        console.error('Error enviando lote:', e);
-        broadcastJob.fallidos += lote.length;
+        console.error('Falló el lote, se reintenta uno por uno:', e.message || e);
+      }
+
+      // Si el lote falló, se envía uno por uno para saber exactamente a quién no le llegó
+      if (!loteOk) {
+        for (const c of validos) {
+          try {
+            const { error } = await resend.emails.send(c);
+            if (error) throw new Error(error.message || 'Error de Resend');
+            broadcastJob.enviados += 1;
+          } catch (e) {
+            broadcastJob.fallidos += 1;
+            broadcastJob.errores.push(`${c.to} (${e.message || 'error'})`);
+          }
+        }
       }
     }
     broadcastJob.running = false;
@@ -563,6 +589,68 @@ app.get('/api/certificado/:token', async (req, res) => {
     console.error('Error generando certificado:', e);
     res.status(500).send('No se pudo generar el certificado. Intenta de nuevo.');
   }
+});
+
+// ── Excel solo con los resultados de la evaluación (respuestas + resumen) ──
+app.get('/api/admin/exportar-evaluaciones', requireAdmin, async (req, res) => {
+  const { rows } = await pool.query(`
+    SELECT r.nombre, r.correo, r.telefono, r.ciudad, r.ocupacion,
+           e.relevancia, e.ponentes, e.asistiria, e.tema, e.herramientas, e.calificacion, e.created_at
+    FROM evaluaciones e JOIN registros r ON r.token = e.token
+    ORDER BY e.created_at
+  `);
+  const total = (await pool.query(`SELECT COUNT(*) AS n FROM registros`)).rows[0].n;
+
+  const wb = new ExcelJS.Workbook();
+
+  // Hoja 1: resumen con totales
+  const res1 = wb.addWorksheet('Resumen');
+  res1.columns = [{ width: 52 }, { width: 14 }, { width: 14 }];
+  const negrita = (row) => { row.font = { bold: true }; };
+  negrita(res1.addRow(['Evaluación I Summit de Comunicación Política']));
+  res1.addRow(['Personas que respondieron', rows.length]);
+  res1.addRow(['Total de registrados en la base', Number(total)]);
+  const prom = rows.length ? rows.reduce((s, r) => s + r.calificacion, 0) / rows.length : 0;
+  res1.addRow(['Calificación promedio del Summit (de 1 a 5)', Number(prom.toFixed(2))]);
+  res1.addRow([]);
+
+  const bloque = (titulo, opciones, valorDe) => {
+    negrita(res1.addRow([titulo, 'Personas', '%']));
+    opciones.forEach((op) => {
+      const n = rows.filter((r) => valorDe(r) === op).length;
+      res1.addRow([op, n, rows.length ? Number(((n / rows.length) * 100).toFixed(1)) : 0]);
+    });
+    res1.addRow([]);
+  };
+  bloque('1. Relevancia de los temas para su rol', OPCIONES.relevancia, (r) => r.relevancia);
+  bloque('2. Nivel de los ponentes', OPCIONES.ponentes, (r) => r.ponentes);
+  bloque('3. ¿Asistiría al seminario de marzo?', OPCIONES.asistiria, (r) => r.asistiria);
+  bloque('3b. Tema sugerido', [...TEMAS, 'Otro'], (r) => (r.tema.startsWith('Otro: ') ? 'Otro' : r.tema));
+  bloque('4. Herramientas concretas recibidas', OPCIONES.herramientas, (r) => r.herramientas);
+  bloque('5. Calificación del Summit (1 a 5)', ['1', '2', '3', '4', '5'], (r) => String(r.calificacion));
+
+  // Hoja 2: respuestas una por persona
+  const hoja = wb.addWorksheet('Respuestas');
+  hoja.columns = [
+    { header: 'nombre', key: 'nombre', width: 30 },
+    { header: 'correo', key: 'correo', width: 30 },
+    { header: 'telefono', key: 'telefono', width: 16 },
+    { header: 'ciudad', key: 'ciudad', width: 16 },
+    { header: 'relevancia_temas', key: 'relevancia', width: 24 },
+    { header: 'nivel_ponentes', key: 'ponentes', width: 16 },
+    { header: 'asistiria_marzo', key: 'asistiria', width: 20 },
+    { header: 'tema_sugerido', key: 'tema', width: 44 },
+    { header: 'herramientas', key: 'herramientas', width: 16 },
+    { header: 'calificacion_summit', key: 'calificacion', width: 20 },
+    { header: 'fecha', key: 'created_at', width: 22 },
+  ];
+  hoja.getRow(1).font = { bold: true };
+  rows.forEach((r) => hoja.addRow(r));
+
+  res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+  res.setHeader('Content-Disposition', 'attachment; filename="evaluacion-summit.xlsx"');
+  await wb.xlsx.write(res);
+  res.end();
 });
 
 const PORT = process.env.PORT || 3000;
