@@ -410,6 +410,28 @@ app.post('/api/admin/marcar-pago', requireAdmin, async (req, res) => {
   res.json({ ok: true, actualizados: r.rowCount });
 });
 
+// ── Agregar asistentes que no se pre-registraron (para poder enviarles su enlace) ──
+app.post('/api/admin/importar-asistentes', requireAdmin, async (req, res) => {
+  const lista = Array.isArray(req.body?.asistentes) ? req.body.asistentes : [];
+  if (lista.length === 0 || lista.length > 500) {
+    return res.status(400).json({ ok: false, error: 'Lista vacía o demasiado grande' });
+  }
+  let creados = 0;
+  for (const a of lista) {
+    const correo = String(a.correo || '').trim().toLowerCase();
+    const nombre = String(a.nombre || '').replace(/\s+/g, ' ').trim();
+    if (!nombre || !/^\S+@\S+\.\S+$/.test(correo)) continue;
+    const r = await pool.query(
+      `INSERT INTO registros (token, nombre, correo, ocupacion, ciudad, telefono, evento, correo_enviado, check_in, check_in_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7, FALSE, TRUE, NOW())
+       ON CONFLICT (correo, evento) DO NOTHING`,
+      [crypto.randomUUID(), nombre, correo, 'Asistente (registro en sitio)', '', String(a.telefono || '').trim(), 'summit-comunicacion-politica-2026']
+    );
+    creados += r.rowCount;
+  }
+  res.json({ ok: true, creados, omitidos: lista.length - creados });
+});
+
 // ── Estado del envío masivo (para la barra de progreso) ────────────
 app.get('/api/admin/estado-envio', requireAdmin, (req, res) => {
   res.json(broadcastJob);
