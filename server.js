@@ -591,6 +591,71 @@ app.get('/api/certificado/:token', async (req, res) => {
   }
 });
 
+// ── Gráficos de torta nativos de Excel (ExcelJS no los trae, se agregan al .xlsx) ──
+const JSZip = require('jszip');
+const escXml = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+
+async function agregarGraficosTorta(buffer, graficos) {
+  // graficos: [{ titulo, filaIni, filaFin }]  (categorías en col. A, cantidades en col. B de la hoja "Resumen")
+  const zip = await JSZip.loadAsync(buffer);
+  const NS_C = 'http://schemas.openxmlformats.org/drawingml/2006/chart';
+  const NS_A = 'http://schemas.openxmlformats.org/drawingml/2006/main';
+  const NS_R = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships';
+
+  let anclas = '';
+  let relsDibujo = '';
+  let overrides = '<Override PartName="/xl/drawings/drawing1.xml" ContentType="application/vnd.openxmlformats-officedocument.drawing+xml"/>';
+
+  graficos.forEach((g, i) => {
+    const n = i + 1;
+    const chartXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<c:chartSpace xmlns:c="${NS_C}" xmlns:a="${NS_A}" xmlns:r="${NS_R}"><c:roundedCorners val="0"/><c:chart>
+<c:title><c:tx><c:rich><a:bodyPr/><a:p><a:pPr><a:defRPr sz="1100" b="1"/></a:pPr><a:r><a:rPr lang="es-CO" sz="1100" b="1"/><a:t>${escXml(g.titulo)}</a:t></a:r></a:p></c:rich></c:tx><c:overlay val="0"/></c:title>
+<c:autoTitleDeleted val="0"/><c:plotArea><c:layout/><c:pieChart><c:varyColors val="1"/>
+<c:ser><c:idx val="0"/><c:order val="0"/><c:tx><c:v>Personas</c:v></c:tx>
+<c:dLbls><c:numFmt formatCode="0%;;" sourceLinked="0"/><c:spPr><a:noFill/><a:ln><a:noFill/></a:ln></c:spPr><c:showLegendKey val="0"/><c:showVal val="0"/><c:showCatName val="0"/><c:showSerName val="0"/><c:showPercent val="1"/><c:showBubbleSize val="0"/><c:showLeaderLines val="1"/></c:dLbls>
+<c:cat><c:strRef><c:f>Resumen!$A$${g.filaIni}:$A$${g.filaFin}</c:f></c:strRef></c:cat>
+<c:val><c:numRef><c:f>Resumen!$B$${g.filaIni}:$B$${g.filaFin}</c:f></c:numRef></c:val>
+</c:ser><c:firstSliceAng val="0"/></c:pieChart></c:plotArea>
+<c:legend><c:legendPos val="r"/><c:overlay val="0"/></c:legend><c:plotVisOnly val="1"/><c:dispBlanksAs val="gap"/></c:chart></c:chartSpace>`;
+    zip.file(`xl/charts/chart${n}.xml`, chartXml);
+    overrides += `<Override PartName="/xl/charts/chart${n}.xml" ContentType="application/vnd.openxmlformats-officedocument.drawingml.chart+xml"/>`;
+    relsDibujo += `<Relationship Id="rId${n}" Type="${NS_R}/chart" Target="../charts/chart${n}.xml"/>`;
+
+    // Cuadrícula de 2 columnas de gráficos a la derecha de las tablas
+    const col = 4 + (i % 2) * 9;
+    const fila = 1 + Math.floor(i / 2) * 18;
+    anclas += `<xdr:twoCellAnchor><xdr:from><xdr:col>${col}</xdr:col><xdr:colOff>0</xdr:colOff><xdr:row>${fila}</xdr:row><xdr:rowOff>0</xdr:rowOff></xdr:from><xdr:to><xdr:col>${col + 8}</xdr:col><xdr:colOff>0</xdr:colOff><xdr:row>${fila + 17}</xdr:row><xdr:rowOff>0</xdr:rowOff></xdr:to><xdr:graphicFrame macro=""><xdr:nvGraphicFramePr><xdr:cNvPr id="${n + 1}" name="Grafico ${n}"/><xdr:cNvGraphicFramePr/></xdr:nvGraphicFramePr><xdr:xfrm><a:off x="0" y="0"/><a:ext cx="0" cy="0"/></xdr:xfrm><a:graphic><a:graphicData uri="${NS_C}"><c:chart xmlns:c="${NS_C}" xmlns:r="${NS_R}" r:id="rId${n}"/></a:graphicData></a:graphic></xdr:graphicFrame><xdr:clientData/></xdr:twoCellAnchor>`;
+  });
+
+  zip.file('xl/drawings/drawing1.xml', `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<xdr:wsDr xmlns:xdr="http://schemas.openxmlformats.org/drawingml/2006/spreadsheetDrawing" xmlns:a="${NS_A}">${anclas}</xdr:wsDr>`);
+  zip.file('xl/drawings/_rels/drawing1.xml.rels', `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">${relsDibujo}</Relationships>`);
+
+  // [Content_Types].xml
+  let ct = await zip.file('[Content_Types].xml').async('string');
+  ct = ct.replace('</Types>', overrides + '</Types>');
+  zip.file('[Content_Types].xml', ct);
+
+  // La hoja "Resumen" es la primera (sheet1.xml): se le enlaza el dibujo
+  const relsPath = 'xl/worksheets/_rels/sheet1.xml.rels';
+  const relDibujo = `<Relationship Id="rIdDibujoResumen" Type="${NS_R}/drawing" Target="../drawings/drawing1.xml"/>`;
+  if (zip.file(relsPath)) {
+    const r = await zip.file(relsPath).async('string');
+    zip.file(relsPath, r.replace('</Relationships>', relDibujo + '</Relationships>'));
+  } else {
+    zip.file(relsPath, `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">${relDibujo}</Relationships>`);
+  }
+  let hoja = await zip.file('xl/worksheets/sheet1.xml').async('string');
+  if (!/xmlns:r=/.test(hoja)) hoja = hoja.replace('<worksheet ', `<worksheet xmlns:r="${NS_R}" `);
+  hoja = hoja.replace('</worksheet>', '<drawing r:id="rIdDibujoResumen"/></worksheet>');
+  zip.file('xl/worksheets/sheet1.xml', hoja);
+
+  return zip.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE' });
+}
+
 // ── Excel solo con los resultados de la evaluación (respuestas + resumen) ──
 app.get('/api/admin/exportar-evaluaciones', requireAdmin, async (req, res) => {
   const { rows } = await pool.query(`
@@ -614,12 +679,15 @@ app.get('/api/admin/exportar-evaluaciones', requireAdmin, async (req, res) => {
   res1.addRow(['Calificación promedio del Summit (de 1 a 5)', Number(prom.toFixed(2))]);
   res1.addRow([]);
 
+  const graficos = [];
   const bloque = (titulo, opciones, valorDe) => {
     negrita(res1.addRow([titulo, 'Personas', '%']));
+    const filaIni = res1.rowCount + 1;
     opciones.forEach((op) => {
       const n = rows.filter((r) => valorDe(r) === op).length;
       res1.addRow([op, n, rows.length ? Number(((n / rows.length) * 100).toFixed(1)) : 0]);
     });
+    graficos.push({ titulo, filaIni, filaFin: res1.rowCount });
     res1.addRow([]);
   };
   bloque('1. Relevancia de los temas para su rol', OPCIONES.relevancia, (r) => r.relevancia);
@@ -649,8 +717,12 @@ app.get('/api/admin/exportar-evaluaciones', requireAdmin, async (req, res) => {
 
   res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
   res.setHeader('Content-Disposition', 'attachment; filename="evaluacion-summit.xlsx"');
-  await wb.xlsx.write(res);
-  res.end();
+  let salida = Buffer.from(await wb.xlsx.writeBuffer());
+  if (rows.length > 0) {
+    try { salida = await agregarGraficosTorta(salida, graficos); }
+    catch (e) { console.error('No se pudieron agregar los gráficos:', e); }   // si falla, se entrega el Excel sin gráficos
+  }
+  res.send(salida);
 });
 
 const PORT = process.env.PORT || 3000;
